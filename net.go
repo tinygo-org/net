@@ -197,3 +197,27 @@ func (e *AddrError) Error() string {
 	}
 	return s
 }
+
+// errNetClosing is the type of the variable ErrNetClosing.
+// This is used to implement the net.Error interface.
+type errNetClosing struct{}
+
+// Error returns the error message for ErrNetClosing.
+// Keep this string consistent because of issue #4373:
+// since historically programs have not been able to detect
+// this error, they look for the string.
+func (e errNetClosing) Error() string { return "use of closed network connection" }
+
+func (e errNetClosing) Timeout() bool   { return false }
+func (e errNetClosing) Temporary() bool { return false }
+
+// errClosed exists just so that the docs for ErrClosed don't mention
+// the internal package poll.
+var errClosed = errNetClosing{}
+
+// ErrClosed is the error returned by an I/O call on a network
+// connection that has already been closed, or that is closed by
+// another goroutine before the I/O is completed. This may be wrapped
+// in another error, and should normally be tested using
+// errors.Is(err, net.ErrClosed).
+var ErrClosed error = errClosed
