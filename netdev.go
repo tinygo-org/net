@@ -1,3 +1,5 @@
+// L3/L4 network/transport layer
+
 package net
 
 import (
@@ -28,20 +30,19 @@ func useNetdev(dev netdever) {
 	netdev = dev
 }
 
-// Netdev is TinyGo's network device driver model.  Network drivers implement
-// the netdever interface, providing a common network I/O interface to TinyGo's
-// "net" package.  The interface is modeled after the BSD socket interface.
-// net.Conn implementations (TCPConn, UDPConn, and TLSConn) use the netdev
-// interface for device I/O access.
+// netdever is TinyGo's OSI L3/L4 network/transport layer interface.  Network
+// drivers implement the netdever interface, providing a common network L3/L4
+// interface to TinyGo's "net" package.  net.Conn implementations (TCPConn,
+// UDPConn, and TLSConn) use the netdever interface for device I/O access.
 //
 // A netdever is passed to the "net" package using net.useNetdev().
 //
 // Just like a net.Conn, multiple goroutines may invoke methods on a netdever
 // simultaneously.
 //
-// NOTE: The netdever interface is mirrored in drivers/netdev.go.
+// NOTE: The netdever interface is mirrored in drivers/netdev/netdev.go.
 // NOTE: If making changes to this interface, mirror the changes in
-// NOTE: drivers/netdev.go, and vice-versa.
+// NOTE: drivers/netdev/netdev.go, and vice-versa.
 
 type netdever interface {
 
