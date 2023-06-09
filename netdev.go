@@ -49,6 +49,10 @@ type netdever interface {
 	// address in standard dot notation
 	GetHostByName(name string) (IP, error)
 
+	// GetIPAddr returns IP address assigned to the interface, either by
+	// DHCP or statically
+	GetIPAddr() (IP, error)
+
 	// Berkely Sockets-like interface, Go-ified.  See man page for socket(2), etc.
 	Socket(domain int, stype int, protocol int) (int, error)
 	Bind(sockfd int, ip IP, port int) error
