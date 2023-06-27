@@ -526,11 +526,12 @@ const TrailerPrefix = "Trailer:"
 func (w *response) finalTrailers() Header {
 	var t Header
 	for k, vv := range w.handlerHeader {
-		if kk, found := strings.CutPrefix(k, TrailerPrefix); found {
+		// TINYGO: CutPrefix not available until 1.20
+		if strings.HasPrefix(k, TrailerPrefix) {
 			if t == nil {
 				t = make(Header)
 			}
-			t[kk] = vv
+			t[strings.TrimPrefix(k, TrailerPrefix)] = vv
 		}
 	}
 	for _, k := range w.trailers {
@@ -760,8 +761,8 @@ func (cr *connReader) handleReadError(_ error) {
 
 // may be called from multiple goroutines.
 func (cr *connReader) closeNotify() {
-	res := cr.conn.curReq.Load()
-	if res != nil && !res.didCloseNotify.Swap(true) {
+	res, _ := cr.conn.curReq.Load().(*response)
+	if res != nil && atomic.CompareAndSwapInt32(&res.didCloseNotify, 0, 1) {
 		res.closeNotifyCh <- true
 	}
 }
@@ -2674,7 +2675,6 @@ func (srv *Server) Close() error {
 	srv.inShutdown.setTrue()
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
-	srv.closeDoneChanLocked()
 	err := srv.closeListenersLocked()
 
 	// Unlock srv.mu while waiting for listenerGroup.
