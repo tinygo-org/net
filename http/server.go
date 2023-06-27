@@ -1,4 +1,8 @@
-// TINYGO: The following is copied and modified from Go 1.19.3 official implementation.
+// TINYGO: The following is copied and modified from Go 1.20.5 official implementation.
+
+// TINYGO: atomic.Pointer and atomic.Uint64 are added in Go 1.19, so keep
+// pre-1.19 code to cover min TinyGo.  If TinyGo min moves to 1.19 or higher,
+// then these can be converted to atomic.Pointer and atomic.Uint64.
 
 // TINYGO: Removed ALPN protocol support
 // TINYGO: Removed some HTTP/2 support
@@ -400,11 +404,11 @@ func (cw *chunkWriter) Write(p []byte) (n int, err error) {
 	return
 }
 
-func (cw *chunkWriter) flush() {
+func (cw *chunkWriter) flush() error {
 	if !cw.wroteHeader {
 		cw.writeHeader(nil)
 	}
-	cw.res.conn.bufw.Flush()
+	return cw.res.conn.bufw.Flush()
 }
 
 func (cw *chunkWriter) close() {
@@ -435,9 +439,9 @@ type response struct {
 	wants10KeepAlive bool               // HTTP/1.0 w/ Connection "keep-alive"
 	wantsClose       bool               // HTTP request has Connection "close"
 
-	// canWriteContinue is a boolean value accessed as an atomic int32
-	// that says whether or not a 100 Continue header can be written
-	// to the connection.
+	// canWriteContinue is an atomic boolean that says whether or
+	// not a 100 Continue header can be written to the
+	// connection.
 	// writeContinueMu must be held while writing the header.
 	// These two fields together synchronize the body reader (the
 	// expectContinueReader, which wants to write 100 Continue)
@@ -494,6 +498,14 @@ type response struct {
 	didCloseNotify int32 // atomic (only 0->1 winner should send)
 }
 
+func (c *response) SetReadDeadline(deadline time.Time) error {
+	return c.conn.rwc.SetReadDeadline(deadline)
+}
+
+func (c *response) SetWriteDeadline(deadline time.Time) error {
+	return c.conn.rwc.SetWriteDeadline(deadline)
+}
+
 // TrailerPrefix is a magic prefix for ResponseWriter.Header map keys
 // that, if present, signals that the map entry is actually for
 // the response trailers, and not the response headers. The prefix
@@ -514,11 +526,11 @@ const TrailerPrefix = "Trailer:"
 func (w *response) finalTrailers() Header {
 	var t Header
 	for k, vv := range w.handlerHeader {
-		if strings.HasPrefix(k, TrailerPrefix) {
+		if kk, found := strings.CutPrefix(k, TrailerPrefix); found {
 			if t == nil {
 				t = make(Header)
 			}
-			t[strings.TrimPrefix(k, TrailerPrefix)] = vv
+			t[kk] = vv
 		}
 	}
 	for _, k := range w.trailers {
@@ -558,12 +570,6 @@ func (w *response) requestTooLarge() {
 	if !w.wroteHeader {
 		w.Header().Set("Connection", "close")
 	}
-}
-
-// needsSniff reports whether a Content-Type still needs to be sniffed.
-func (w *response) needsSniff() bool {
-	_, haveType := w.handlerHeader["Content-Type"]
-	return !w.cw.wroteHeader && !haveType && w.written < sniffLen
 }
 
 // writerOnly hides an io.Writer value's optional ReadFrom method
@@ -754,8 +760,8 @@ func (cr *connReader) handleReadError(_ error) {
 
 // may be called from multiple goroutines.
 func (cr *connReader) closeNotify() {
-	res, _ := cr.conn.curReq.Load().(*response)
-	if res != nil && atomic.CompareAndSwapInt32(&res.didCloseNotify, 0, 1) {
+	res := cr.conn.curReq.Load()
+	if res != nil && !res.didCloseNotify.Swap(true) {
 		res.closeNotifyCh <- true
 	}
 }
@@ -1706,11 +1712,19 @@ func (w *response) closedRequestBodyEarly() bool {
 }
 
 func (w *response) Flush() {
+	w.FlushError()
+}
+
+func (w *response) FlushError() error {
 	if !w.wroteHeader {
 		w.WriteHeader(StatusOK)
 	}
-	w.w.Flush()
-	w.cw.flush()
+	err := w.w.Flush()
+	e2 := w.cw.flush()
+	if err == nil {
+		err = e2
+	}
+	return err
 }
 
 func (c *conn) finalFlush() {
@@ -1964,6 +1978,7 @@ func (c *conn) serve(ctx context.Context) {
 			return
 		}
 		w.finishRequest()
+		c.rwc.SetWriteDeadline(time.Time{})
 		if !w.shouldReuseConnection() {
 			if w.requestBodyLimitHit || w.closedRequestBodyEarly() {
 				c.closeWriteAndWait()
@@ -1983,10 +1998,18 @@ func (c *conn) serve(ctx context.Context) {
 
 		if d := c.server.idleTimeout(); d != 0 {
 			c.rwc.SetReadDeadline(time.Now().Add(d))
-			if _, err := c.bufr.Peek(4); err != nil {
-				return
-			}
+		} else {
+			c.rwc.SetReadDeadline(time.Time{})
 		}
+
+		// Wait for the connection to become readable again before trying to
+		// read the next request. This prevents a ReadHeaderTimeout or
+		// ReadTimeout from starting until the first bytes of the next request
+		// have been received.
+		if _, err := c.bufr.Peek(4); err != nil {
+			return
+		}
+
 		c.rwc.SetReadDeadline(time.Time{})
 	}
 }
@@ -2548,6 +2571,10 @@ type Server struct {
 
 	Handler Handler // handler to invoke, http.DefaultServeMux if nil
 
+	// DisableGeneralOptionsHandler, if true, passes "OPTIONS *" requests to the Handler,
+	// otherwise responds with 200 OK and Content-Length: 0.
+	DisableGeneralOptionsHandler bool
+
 	// TLSConfig optionally provides a TLS configuration for use
 	// by ServeTLS and ListenAndServeTLS. Note that this value is
 	// cloned by ServeTLS and ListenAndServeTLS, so it's not
@@ -2629,35 +2656,9 @@ type Server struct {
 	mu         sync.Mutex
 	listeners  map[*net.Listener]struct{}
 	activeConn map[*conn]struct{}
-	doneChan   chan struct{}
 	onShutdown []func()
 
 	listenerGroup sync.WaitGroup
-}
-
-func (s *Server) getDoneChan() <-chan struct{} {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.getDoneChanLocked()
-}
-
-func (s *Server) getDoneChanLocked() chan struct{} {
-	if s.doneChan == nil {
-		s.doneChan = make(chan struct{})
-	}
-	return s.doneChan
-}
-
-func (s *Server) closeDoneChanLocked() {
-	ch := s.getDoneChanLocked()
-	select {
-	case <-ch:
-		// Already closed. Don't close again.
-	default:
-		// Safe to close here. We're the only closer, guarded
-		// by s.mu.
-		close(ch)
-	}
 }
 
 // Close immediately closes all active net.Listeners and any
@@ -2725,7 +2726,6 @@ func (srv *Server) Shutdown(ctx context.Context) error {
 
 	srv.mu.Lock()
 	lnerr := srv.closeListenersLocked()
-	srv.closeDoneChanLocked()
 	for _, f := range srv.onShutdown {
 		go f()
 	}
@@ -2869,7 +2869,7 @@ func (sh serverHandler) ServeHTTP(rw ResponseWriter, req *Request) {
 	if handler == nil {
 		handler = DefaultServeMux
 	}
-	if req.RequestURI == "*" && req.Method == "OPTIONS" {
+	if !sh.srv.DisableGeneralOptionsHandler && req.RequestURI == "*" && req.Method == "OPTIONS" {
 		handler = globalOptionsHandler{}
 	}
 
@@ -2984,10 +2984,8 @@ func (srv *Server) Serve(l net.Listener) error {
 	for {
 		rw, err := l.Accept()
 		if err != nil {
-			select {
-			case <-srv.getDoneChan():
+			if srv.shuttingDown() {
 				return ErrServerClosed
-			default:
 			}
 			if ne, ok := err.(net.Error); ok && ne.Temporary() {
 				if tempDelay == 0 {
