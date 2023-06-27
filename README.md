@@ -4,17 +4,22 @@ package.  The subset maintains Go 1 compatiblity guarantee.
 
 The "net" package is modified to use netdev, TinyGo's network device driver interface.
 Netdev replaces the OS syscall interface for I/O access to the networking
-device.
+device.  See drivers/netdev for more information on netdev.
 
 #### Table of Contents
 
-- ["net" Package](#net-package)
-- [Netdev and Netlink](#netdev-and-netlink)
 - [Using "net" and "net/http" Packages](#using-net-and-nethttp-packages)
+- ["net" Package](#net-package)
+- [Maintaining "net"](#maintaining-net)
  
+## Using "net" and "net/http" Packages
+
+See README-net.md in drivers repo to more details on using "net" and "net/http"
+packages in a TinyGo application.
+
 ## "net" Package
 
-The "net" package is ported from Go 1.19.3.  The tree listings below shows the
+The "net" package is ported from Go 1.20.5.  The tree listings below shows the
 files copied.  If the file is marked with an '\*', it is copied _and_ modified
 to work with netdev.  If the file is marked with an '+', the file is new.  If
 there is no mark, it is a straight copy.
@@ -75,7 +80,7 @@ request/response handling code is intact and operational in TinyGo.  Same holds
 true for the server side.  The server side supports the normal server features
 like ServeMux and Hijacker (for websockets).
 
-### Maintaining "net"
+## Maintaining "net"
 
 As Go progresses, changes to the "net" package need to be periodically
 back-ported to TinyGo's "net" package.  This is to pick up any upstream bug
@@ -87,22 +92,45 @@ The files that are marked modified * may contain only a subset of the original
 file.  Basically only the parts necessary to compile and run the example/net
 examples are copied (and maybe modified).
 
-## Netdev and Netlink
+### Upgrade Steps
 
-Netdev is TinyGo's network device driver model.  Network drivers implement the
-netdever interface, providing a common network I/O interface to TinyGo's "net"
-package.  The interface is modeled after the BSD socket interface.  net.Conn
-implementations (TCPConn, UDPConn, and TLSConn) use the netdev interface for
-device I/O access.
+Let's define some versions:
 
-Network drivers also (optionally) implement the Netlinker interface.  This
-interface is not used by TinyGo's "net" package, but rather provides the TinyGo
-application direct access to the network device for common settings and control
-that fall outside of netdev's socket interface.
+MIN = TinyGo minimum Go version supported (e.g. 1.15)
+CUR = TinyGo "net" current version (e.g. 1.20.5)
+UPSTREAM = Latest upstream Go version to upgrade to (e.g. 1.21)
+NEW = TinyGo "net" new version, after upgrade
 
-See the README-net.md in drivers repo for more details on netdev and netlink.
+In example, we'll upgrade from CUR (1.20.5) to UPSTREAM (1.21).
 
-## Using "net" and "net/http" Packages
+These are the steps to promote TinyGos "net" to latest Go upstream version.
+These steps should be done when:
 
-See README-net.md in drivers repo to more details on using "net" and "net/http"
-packages in a TinyGo application.
+- MIN moved forward
+- TinyGo major release
+- TinyGo minor release to pick up security fixes in UPSTREAM
+
+Step 1:
+
+Backport differences from Go UPSTREAM to Go CUR.  Since TinyGo CUR isn't the
+full Go "net" implementation, only backport differences, don't add new stuff
+from UPSTREAM (unless it's needed in the NEW release).
+
+	NEW = CUR + diff(CUR, UPSTREAM)
+
+If NEW contains updates not compatible with MIN, then NEW will need to revert
+just those updates back to the CUR version, and annotate with a TINYGO comment.
+If MIN moves forord, NEW can pull in the UPSTREAM changes.
+
+Step 2:
+
+As a double check, compare NEW against UPSTREAM.  The only differences at this
+point should be excluded (not ported) code from UPSTREAM that wasn't in CUR in
+the first place, and differences due to changes held back for MIN support.
+
+Step 3:
+
+Test NEW against example/net examples.  If everything checks out, then CUR
+becomes NEW, and we can push to TinyGo.
+
+	CUR = NEW
