@@ -11,7 +11,6 @@ package http
 import (
 	"errors"
 	"fmt"
-	"internal/safefilepath"
 	"io"
 	"io/fs"
 	"mime"
@@ -72,15 +71,16 @@ func mapOpenError(originalErr error, name string, sep rune, stat func(string) (f
 // Open implements FileSystem using os.Open, opening files for reading rooted
 // and relative to the directory d.
 func (d Dir) Open(name string) (File, error) {
-	path, err := safefilepath.FromFS(path.Clean("/" + name))
-	if err != nil {
-		return nil, errors.New("http: invalid or unsafe file path")
+	// TINYGO: internal/safefilepath isn't avail until 1.20, so keep pre 1.20
+	// TINYGO: code here until TinyGo min Go version is >= 1.20.
+	if filepath.Separator != '/' && strings.ContainsRune(name, filepath.Separator) {
+		return nil, errors.New("http: invalid character in file path")
 	}
 	dir := string(d)
 	if dir == "" {
 		dir = "."
 	}
-	fullName := filepath.Join(dir, path)
+	fullName := filepath.Join(dir, filepath.FromSlash(path.Clean("/"+name)))
 	f, err := os.Open(fullName)
 	if err != nil {
 		return nil, mapOpenError(err, fullName, filepath.Separator, os.Stat)
@@ -449,7 +449,8 @@ func checkIfUnmodifiedSince(r *Request, modtime time.Time) condResult {
 	// The Last-Modified header truncates sub-second precision so
 	// the modtime needs to be truncated too.
 	modtime = modtime.Truncate(time.Second)
-	if ret := modtime.Compare(t); ret <= 0 {
+	// TINYGO: time.Compare not until Go 1.20
+	if modtime.Before(t) || modtime.Equal(t) {
 		return condTrue
 	}
 	return condFalse
@@ -500,7 +501,8 @@ func checkIfModifiedSince(r *Request, modtime time.Time) condResult {
 	// The Last-Modified header truncates sub-second precision so
 	// the modtime needs to be truncated too.
 	modtime = modtime.Truncate(time.Second)
-	if ret := modtime.Compare(t); ret <= 0 {
+	// TINYGO: time.Compare not until Go 1.20
+	if modtime.Before(t) || modtime.Equal(t) {
 		return condFalse
 	}
 	return condTrue
