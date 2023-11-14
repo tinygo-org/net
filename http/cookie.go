@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.20.5 official implementation.
+// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
