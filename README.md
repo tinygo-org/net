@@ -19,7 +19,7 @@ packages in a TinyGo application.
 
 ## "net" Package
 
-The "net" package is ported from Go 1.20.5.  The tree listings below shows the
+The "net" package is ported from Go 1.21.4.  The tree listings below shows the
 files copied.  If the file is marked with an '\*', it is copied _and_ modified
 to work with netdev.  If the file is marked with an '+', the file is new.  If
 there is no mark, it is a straight copy.

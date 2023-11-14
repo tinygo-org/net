@@ -1,9 +1,10 @@
-// TINYGO: The following is copied and modified from Go 1.20.5 official implementation.
+// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
 
 // TINYGO: Omit DualStack support
 // TINYGO: Omit Fast Fallback support
 // TINYGO: Don't allow alternate resolver
 // TINYGO: Omit DialTimeout
+// TINYGO: Omit Multipath TCP
 
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -17,9 +18,9 @@ import (
 	"time"
 )
 
-// defaultTCPKeepAlive is a default constant value for TCPKeepAlive times
-// See golang.org/issue/31510
 const (
+	// defaultTCPKeepAlive is a default constant value for TCPKeepAlive times
+	// See go.dev/issue/31510
 	defaultTCPKeepAlive = 15 * time.Second
 )
 
