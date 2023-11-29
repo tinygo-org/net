@@ -11,6 +11,7 @@ package net
 import (
 	"internal/itoa"
 	"io"
+	"net/netip"
 	"strconv"
 	"time"
 )
@@ -61,8 +62,8 @@ func DialTLS(addr string) (*TLSConn, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	if err = netdev.Connect(fd, host, IP{}, port); err != nil {
+	addrport := netip.AddrPortFrom(netip.Addr{}, uint16(port))
+	if err = netdev.Connect(fd, host, addrport); err != nil {
 		netdev.Close(fd)
 		return nil, err
 	}

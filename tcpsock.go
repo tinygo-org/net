@@ -7,6 +7,7 @@
 package net
 
 import (
+	"errors"
 	"fmt"
 	"internal/itoa"
 	"io"
@@ -114,7 +115,7 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 		return nil, fmt.Errorf("Lookup of host name '%s' failed: %s", host, err)
 	}
 
-	return &TCPAddr{IP: ip, Port: port}, nil
+	return &TCPAddr{IP: ip.AsSlice(), Port: port}, nil
 }
 
 // TCPConn is an implementation of the Conn interface for TCP network
@@ -140,7 +141,7 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 	switch network {
 	case "tcp", "tcp4":
 	default:
-		return nil, fmt.Errorf("Network '%s' not supported", network)
+		return nil, errors.New("Network not supported: '" + network + "'")
 	}
 
 	// TINYGO: Use netdev to create TCP socket and connect
@@ -150,7 +151,9 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 	}
 
 	if raddr.IP.IsUnspecified() {
-		return nil, fmt.Errorf("Sorry, localhost isn't available on Tinygo")
+		return nil, errors.New("Sorry, localhost isn't available on Tinygo")
+	} else if len(raddr.IP) != 4 {
+		return nil, errors.New("only ipv4 supported")
 	}
 
 	fd, err := netdev.Socket(_AF_INET, _SOCK_STREAM, _IPPROTO_TCP)
@@ -158,7 +161,8 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 		return nil, err
 	}
 
-	if err = netdev.Connect(fd, "", raddr.IP, raddr.Port); err != nil {
+	raddrport := netip.AddrPortFrom(netip.AddrFrom4([4]byte(raddr.IP)), uint16(raddr.Port))
+	if err = netdev.Connect(fd, "", raddrport); err != nil {
 		netdev.Close(fd)
 		return nil, err
 	}
@@ -244,7 +248,7 @@ type listener struct {
 }
 
 func (l *listener) Accept() (Conn, error) {
-	fd, err := netdev.Accept(l.fd, IP{}, 0)
+	fd, err := netdev.Accept(l.fd, netip.AddrPort{})
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +274,8 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 		return nil, err
 	}
 
-	err = netdev.Bind(fd, laddr.IP, laddr.Port)
+	laddrport := netip.AddrPortFrom(netip.AddrFrom4([4]byte(laddr.IP)), uint16(laddr.Port))
+	err = netdev.Bind(fd, laddrport)
 	if err != nil {
 		return nil, err
 	}

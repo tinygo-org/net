@@ -109,7 +109,7 @@ func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 		return nil, fmt.Errorf("Lookup of host name '%s' failed: %s", host, err)
 	}
 
-	return &UDPAddr{IP: ip, Port: port}, nil
+	return &UDPAddr{IP: ip.AsSlice(), Port: port}, nil
 }
 
 // UDPConn is the implementation of the Conn and PacketConn interfaces
@@ -172,16 +172,18 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	laddrport := netip.AddrPortFrom(netip.AddrFrom4([4]byte(laddr.IP)), uint16(laddr.Port))
 
 	// Local bind
-	err = netdev.Bind(fd, laddr.IP, laddr.Port)
+	err = netdev.Bind(fd, laddrport)
 	if err != nil {
 		netdev.Close(fd)
 		return nil, err
 	}
 
+	raddrport := netip.AddrPortFrom(netip.AddrFrom4([4]byte(raddr.IP)), uint16(raddr.Port))
 	// Remote connect
-	if err = netdev.Connect(fd, "", raddr.IP, raddr.Port); err != nil {
+	if err = netdev.Connect(fd, "", raddrport); err != nil {
 		netdev.Close(fd)
 		return nil, err
 	}
