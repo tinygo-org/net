@@ -3,6 +3,7 @@
 package net
 
 import (
+	"net/netip"
 	"time"
 )
 
@@ -48,18 +49,18 @@ type netdever interface {
 
 	// GetHostByName returns the IP address of either a hostname or IPv4
 	// address in standard dot notation
-	GetHostByName(name string) (IP, error)
+	GetHostByName(name string) (netip.Addr, error)
 
 	// GetIPAddr returns IP address assigned to the interface, either by
 	// DHCP or statically
-	GetIPAddr() (IP, error)
+	Addr() (netip.Addr, error)
 
 	// Berkely Sockets-like interface, Go-ified.  See man page for socket(2), etc.
 	Socket(domain int, stype int, protocol int) (int, error)
-	Bind(sockfd int, ip IP, port int) error
-	Connect(sockfd int, host string, ip IP, port int) error
+	Bind(sockfd int, ip netip.AddrPort) error
+	Connect(sockfd int, host string, ip netip.AddrPort) error
 	Listen(sockfd int, backlog int) error
-	Accept(sockfd int, ip IP, port int) (int, error)
+	Accept(sockfd int, ip netip.AddrPort) (int, error)
 	Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error)
 	Recv(sockfd int, buf []byte, flags int, deadline time.Time) (int, error)
 	Close(sockfd int) error
