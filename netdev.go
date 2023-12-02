@@ -51,7 +51,7 @@ type netdever interface {
 	// address in standard dot notation
 	GetHostByName(name string) (netip.Addr, error)
 
-	// GetIPAddr returns IP address assigned to the interface, either by
+	// Addr returns IP address assigned to the interface, either by
 	// DHCP or statically
 	Addr() (netip.Addr, error)
 
