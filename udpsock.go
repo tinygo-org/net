@@ -172,7 +172,8 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	if err != nil {
 		return nil, err
 	}
-	laddrport := netip.AddrPortFrom(netip.AddrFrom4([4]byte(laddr.IP)), uint16(laddr.Port))
+	lip, _ := netip.AddrFromSlice(laddr.IP)
+	laddrport := netip.AddrPortFrom(lip, uint16(laddr.Port))
 
 	// Local bind
 	err = netdev.Bind(fd, laddrport)
@@ -181,7 +182,8 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 		return nil, err
 	}
 
-	raddrport := netip.AddrPortFrom(netip.AddrFrom4([4]byte(raddr.IP)), uint16(raddr.Port))
+	rip, _ := netip.AddrFromSlice(raddr.IP)
+	raddrport := netip.AddrPortFrom(rip, uint16(raddr.Port))
 	// Remote connect
 	if err = netdev.Connect(fd, "", raddrport); err != nil {
 		netdev.Close(fd)
