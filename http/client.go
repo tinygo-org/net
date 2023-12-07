@@ -56,6 +56,11 @@ import (
 // with the updated values (assuming the origin matches).
 // If Jar is nil, the initial cookies are forwarded without change.
 type Client struct {
+	// Transport specifies the mechanism by which individual
+	// HTTP requests are made.
+	// If nil, DefaultTransport is used.
+	Transport RoundTripper
+
 	// Jar specifies the cookie jar.
 	//
 	// The Jar is used to insert relevant cookies into every
@@ -87,6 +92,39 @@ type Client struct {
 
 // DefaultClient is the default Client and is used by Get, Head, and Post.
 var DefaultClient = &Client{}
+
+// RoundTripper is an interface representing the ability to execute a
+// single HTTP transaction, obtaining the Response for a given Request.
+//
+// A RoundTripper must be safe for concurrent use by multiple
+// goroutines.
+type RoundTripper interface {
+	// RoundTrip executes a single HTTP transaction, returning
+	// a Response for the provided Request.
+	//
+	// RoundTrip should not attempt to interpret the response. In
+	// particular, RoundTrip must return err == nil if it obtained
+	// a response, regardless of the response's HTTP status code.
+	// A non-nil err should be reserved for failure to obtain a
+	// response. Similarly, RoundTrip should not attempt to
+	// handle higher-level protocol details such as redirects,
+	// authentication, or cookies.
+	//
+	// RoundTrip should not modify the request, except for
+	// consuming and closing the Request's Body. RoundTrip may
+	// read fields of the request in a separate goroutine. Callers
+	// should not mutate or reuse the request until the Response's
+	// Body has been closed.
+	//
+	// RoundTrip must always close the body, including on errors,
+	// but depending on the implementation may do so in a separate
+	// goroutine even after RoundTrip returns. This means that
+	// callers wanting to reuse the body for subsequent requests
+	// must arrange to wait for the Close call before doing so.
+	//
+	// The Request's URL and Header fields must be initialized.
+	RoundTrip(*Request) (*Response, error)
+}
 
 // didTimeout is non-nil only if err != nil.
 func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
