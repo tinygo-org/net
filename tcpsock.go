@@ -289,3 +289,9 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 
 	return &listener{fd: fd, laddr: laddr}, nil
 }
+
+// TCPListener is a TCP network listener. Clients should typically
+// use variables of type Listener instead of assuming TCP.
+type TCPListener struct {
+    listener
+}
