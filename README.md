@@ -49,9 +49,11 @@ src/net
 │   ├── status.go
 │   ├── transfer.go		*
 │   └── transport.go		*
+├── interface.go		*
 ├── ip.go
 ├── iprawsock.go		*
 ├── ipsock.go			*
+├── lookup.go			*
 ├── mac.go
 ├── mac_test.go
 ├── netdev.go			+
@@ -61,10 +63,12 @@ src/net
 ├── README.md
 ├── tcpsock.go			*
 ├── tlssock.go			+
-└── udpsock.go			*
+├── udpsock.go			*
+└── unixsock.go			*
 
 src/crypto/tls/
 ├── common.go			*
+├── ticket.go			*
 └── tls.go			*
 ```
 

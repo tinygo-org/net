@@ -13,6 +13,7 @@ const (
 	_SOCK_DGRAM    = 0x2
 	_SOL_SOCKET    = 0x1
 	_SO_KEEPALIVE  = 0x9
+	_SO_LINGER     = 0xd
 	_SOL_TCP       = 0x6
 	_TCP_KEEPINTVL = 0x5
 	_IPPROTO_TCP   = 0x6

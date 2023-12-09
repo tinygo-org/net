@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/netip"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -178,6 +179,12 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 
 // TINYGO: Use netdev for Conn methods: Read = Recv, Write = Send, etc.
 
+// SyscallConn returns a raw network connection.
+// This implements the syscall.Conn interface.
+func (c *TCPConn) SyscallConn() (syscall.RawConn, error) {
+	return nil, errors.New("SyscallConn not implemented")
+}
+
 func (c *TCPConn) Read(b []byte) (int, error) {
 	n, err := netdev.Recv(c.fd, b, 0, c.readDeadline)
 	// Turn the -1 socket error into 0 and let err speak for error
@@ -220,10 +227,31 @@ func (c *TCPConn) SetDeadline(t time.Time) error {
 	return nil
 }
 
+// SetLinger sets the behavior of Close on a connection which still
+// has data waiting to be sent or to be acknowledged.
+//
+// If sec < 0 (the default), the operating system finishes sending the
+// data in the background.
+//
+// If sec == 0, the operating system discards any unsent or
+// unacknowledged data.
+//
+// If sec > 0, the data is sent in the background as with sec < 0.
+// On some operating systems including Linux, this may cause Close to block
+// until all data has been sent or discarded.
+// On some operating systems after sec seconds have elapsed any remaining
+// unsent data may be discarded.
+func (c *TCPConn) SetLinger(sec int) error {
+	return netdev.SetSockOpt(c.fd, _SOL_SOCKET, _SO_LINGER, sec)
+}
+
+// SetKeepAlive sets whether the operating system should send
+// keep-alive messages on the connection.
 func (c *TCPConn) SetKeepAlive(keepalive bool) error {
 	return netdev.SetSockOpt(c.fd, _SOL_SOCKET, _SO_KEEPALIVE, keepalive)
 }
 
+// SetKeepAlivePeriod sets period between keep-alives.
 func (c *TCPConn) SetKeepAlivePeriod(d time.Duration) error {
 	// Units are 1/2 seconds
 	return netdev.SetSockOpt(c.fd, _SOL_TCP, _TCP_KEEPINTVL, 2*d.Seconds())

@@ -6,6 +6,11 @@
 
 package net
 
+import (
+	"errors"
+	"syscall"
+)
+
 // BUG(mikio): On every POSIX platform, reads from the "ip4" network
 // using the ReadFrom or ReadFromIP method might not return a complete
 // IPv4 packet, including its header, even if there is space
@@ -56,4 +61,43 @@ func (a *IPAddr) opAddr() Addr {
 		return nil
 	}
 	return a
+}
+
+// IPConn is the implementation of the Conn and PacketConn interfaces
+// for IP network connections.
+type IPConn struct {
+	conn
+}
+
+// SyscallConn returns a raw network connection.
+// This implements the syscall.Conn interface.
+func (c *IPConn) SyscallConn() (syscall.RawConn, error) {
+	return nil, errors.New("SyscallConn not implemented")
+}
+
+// ReadMsgIP reads a message from c, copying the payload into b and
+// the associated out-of-band data into oob. It returns the number of
+// bytes copied into b, the number of bytes copied into oob, the flags
+// that were set on the message and the source address of the message.
+//
+// The packages golang.org/x/net/ipv4 and golang.org/x/net/ipv6 can be
+// used to manipulate IP-level socket options in oob.
+func (c *IPConn) ReadMsgIP(b, oob []byte) (n, oobn, flags int, addr *IPAddr, err error) {
+	err = errors.New("ReadMsgIP not implemented")
+	return
+}
+
+// ReadFrom implements the PacketConn ReadFrom method.
+func (c *IPConn) ReadFrom(b []byte) (int, Addr, error) {
+	return 0, nil, errors.New("ReadFrom not implemented")
+}
+
+// WriteToIP acts like WriteTo but takes an IPAddr.
+func (c *IPConn) WriteToIP(b []byte, addr *IPAddr) (int, error) {
+	return 0, errors.New("WriteToIP not implemented")
+}
+
+// WriteTo implements the PacketConn WriteTo method.
+func (c *IPConn) WriteTo(b []byte, addr Addr) (int, error) {
+	return 0, errors.New("WriteTo not implemented")
 }
