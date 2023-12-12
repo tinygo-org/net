@@ -16,8 +16,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 	"syscall"
+	"time"
 )
 
 const (

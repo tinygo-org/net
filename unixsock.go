@@ -6,9 +6,6 @@
 
 package net
 
-import (
-)
-
 // BUG(mikio): On JS, WASIP1 and Plan 9, methods and functions related
 // to UnixConn and UnixListener are not implemented.
 
