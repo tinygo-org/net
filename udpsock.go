@@ -7,11 +7,13 @@
 package net
 
 import (
+	"errors"
 	"fmt"
 	"internal/itoa"
 	"io"
 	"net/netip"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -198,6 +200,12 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	}, nil
 }
 
+// SyscallConn returns a raw network connection.
+// This implements the syscall.Conn interface.
+func (c *UDPConn) SyscallConn() (syscall.RawConn, error) {
+	return nil, errors.New("SyscallConn not implemented")
+}
+
 // TINYGO: Use netdev for Conn methods: Read = Recv, Write = Send, etc.
 
 func (c *UDPConn) Read(b []byte) (int, error) {
@@ -222,6 +230,40 @@ func (c *UDPConn) Write(b []byte) (int, error) {
 		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
 	}
 	return n, err
+}
+
+// ReadFrom implements the PacketConn ReadFrom method.
+func (c *UDPConn) ReadFrom(b []byte) (int, Addr, error) {
+	return 0, nil, errors.New("ReadFrom not implemented")
+}
+
+// ReadMsgUDP reads a message from c, copying the payload into b and
+// the associated out-of-band data into oob. It returns the number of
+// bytes copied into b, the number of bytes copied into oob, the flags
+// that were set on the message and the source address of the message.
+//
+// The packages golang.org/x/net/ipv4 and golang.org/x/net/ipv6 can be
+// used to manipulate IP-level socket options in oob.
+func (c *UDPConn) ReadMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, err error) {
+	err = errors.New("ReadMsgUDP not implemented")
+	return
+}
+
+// WriteTo implements the PacketConn WriteTo method.
+func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
+	return 0, errors.New("WriteTo not implemented")
+}
+
+// WriteMsgUDP writes a message to addr via c if c isn't connected, or
+// to c's remote address if c is connected (in which case addr must be
+// nil). The payload is copied from b and the associated out-of-band
+// data is copied from oob. It returns the number of payload and
+// out-of-band bytes written.
+//
+// The packages golang.org/x/net/ipv4 and golang.org/x/net/ipv6 can be
+// used to manipulate IP-level socket options in oob.
+func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err error) {
+	return 0, 0, errors.New("WriteMsgUDP not implemented")
 }
 
 func (c *UDPConn) Close() error {

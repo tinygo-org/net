@@ -7,6 +7,7 @@
 package net
 
 import (
+	"errors"
 	"time"
 )
 
@@ -77,6 +78,102 @@ type Conn interface {
 	// Even if write times out, it may return n > 0, indicating that
 	// some of the data was successfully written.
 	// A zero value for t means Write will not time out.
+	SetWriteDeadline(t time.Time) error
+}
+
+type conn struct {
+	// TINYGO: no fd defined
+}
+
+// Close closes the connection.
+func (c *conn) Close() error {
+	return errors.New("conn.Close not implemented")
+}
+
+// LocalAddr returns the local network address.
+// The Addr returned is shared by all invocations of LocalAddr, so
+// do not modify it.
+func (c *conn) LocalAddr() Addr {
+	// TINYGO: not implemented
+	return nil
+}
+
+// SetDeadline implements the Conn SetDeadline method.
+func (c *conn) SetDeadline(t time.Time) error {
+	return errors.New("conn.SetDeadline not implemented")
+}
+
+// SetReadDeadline implements the Conn SetReadDeadline method.
+func (c *conn) SetReadDeadline(t time.Time) error {
+	return errors.New("conn.SetReadDeadline not implemented")
+}
+
+// SetWriteDeadline implements the Conn SetWriteDeadline method.
+func (c *conn) SetWriteDeadline(t time.Time) error {
+	return errors.New("conn.SetWriteDeadline not implemented")
+}
+
+// PacketConn is a generic packet-oriented network connection.
+//
+// Multiple goroutines may invoke methods on a PacketConn simultaneously.
+type PacketConn interface {
+	// ReadFrom reads a packet from the connection,
+	// copying the payload into p. It returns the number of
+	// bytes copied into p and the return address that
+	// was on the packet.
+	// It returns the number of bytes read (0 <= n <= len(p))
+	// and any error encountered. Callers should always process
+	// the n > 0 bytes returned before considering the error err.
+	// ReadFrom can be made to time out and return an error after a
+	// fixed time limit; see SetDeadline and SetReadDeadline.
+	ReadFrom(p []byte) (n int, addr Addr, err error)
+
+	// WriteTo writes a packet with payload p to addr.
+	// WriteTo can be made to time out and return an Error after a
+	// fixed time limit; see SetDeadline and SetWriteDeadline.
+	// On packet-oriented connections, write timeouts are rare.
+	WriteTo(p []byte, addr Addr) (n int, err error)
+
+	// Close closes the connection.
+	// Any blocked ReadFrom or WriteTo operations will be unblocked and return errors.
+	Close() error
+
+	// LocalAddr returns the local network address, if known.
+	LocalAddr() Addr
+
+	// SetDeadline sets the read and write deadlines associated
+	// with the connection. It is equivalent to calling both
+	// SetReadDeadline and SetWriteDeadline.
+	//
+	// A deadline is an absolute time after which I/O operations
+	// fail instead of blocking. The deadline applies to all future
+	// and pending I/O, not just the immediately following call to
+	// Read or Write. After a deadline has been exceeded, the
+	// connection can be refreshed by setting a deadline in the future.
+	//
+	// If the deadline is exceeded a call to Read or Write or to other
+	// I/O methods will return an error that wraps os.ErrDeadlineExceeded.
+	// This can be tested using errors.Is(err, os.ErrDeadlineExceeded).
+	// The error's Timeout method will return true, but note that there
+	// are other possible errors for which the Timeout method will
+	// return true even if the deadline has not been exceeded.
+	//
+	// An idle timeout can be implemented by repeatedly extending
+	// the deadline after successful ReadFrom or WriteTo calls.
+	//
+	// A zero value for t means I/O operations will not time out.
+	SetDeadline(t time.Time) error
+
+	// SetReadDeadline sets the deadline for future ReadFrom calls
+	// and any currently-blocked ReadFrom call.
+	// A zero value for t means ReadFrom will not time out.
+	SetReadDeadline(t time.Time) error
+
+	// SetWriteDeadline sets the deadline for future WriteTo calls
+	// and any currently-blocked WriteTo call.
+	// Even if write times out, it may return n > 0, indicating that
+	// some of the data was successfully written.
+	// A zero value for t means WriteTo will not time out.
 	SetWriteDeadline(t time.Time) error
 }
 

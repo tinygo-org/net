@@ -14,7 +14,9 @@ package net
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"syscall"
 	"time"
 )
 
@@ -23,6 +25,9 @@ const (
 	// See go.dev/issue/31510
 	defaultTCPKeepAlive = 15 * time.Second
 )
+
+// mptcpStatus is a tristate for Multipath TCP, see go.dev/issue/56539
+type mptcpStatus uint8
 
 // A Dialer contains options for connecting to an address.
 //
@@ -144,6 +149,46 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 	}
 
 	return nil, fmt.Errorf("Network %s not supported", network)
+}
+
+// ListenConfig contains options for listening to an address.
+type ListenConfig struct {
+	// If Control is not nil, it is called after creating the network
+	// connection but before binding it to the operating system.
+	//
+	// Network and address parameters passed to Control method are not
+	// necessarily the ones passed to Listen. For example, passing "tcp" to
+	// Listen will cause the Control function to be called with "tcp4" or "tcp6".
+	Control func(network, address string, c syscall.RawConn) error
+
+	// KeepAlive specifies the keep-alive period for network
+	// connections accepted by this listener.
+	// If zero, keep-alives are enabled if supported by the protocol
+	// and operating system. Network protocols or operating systems
+	// that do not support keep-alives ignore this field.
+	// If negative, keep-alives are disabled.
+	KeepAlive time.Duration
+
+	// If mptcpStatus is set to a value allowing Multipath TCP (MPTCP) to be
+	// used, any call to Listen with "tcp(4|6)" as network will use MPTCP if
+	// supported by the operating system.
+	mptcpStatus mptcpStatus
+}
+
+// Listen announces on the local network address.
+//
+// See func Listen for a description of the network and address
+// parameters.
+func (lc *ListenConfig) Listen(ctx context.Context, network, address string) (Listener, error) {
+	return nil, errors.New("dial:ListenConfig:Listen not implemented")
+}
+
+// ListenPacket announces on the local network address.
+//
+// See func ListenPacket for a description of the network and address
+// parameters.
+func (lc *ListenConfig) ListenPacket(ctx context.Context, network, address string) (PacketConn, error) {
+	return nil, errors.New("dial:ListenConfig:ListenPacket not implemented")
 }
 
 // Listen announces on the local network address.
