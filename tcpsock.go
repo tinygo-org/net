@@ -119,6 +119,17 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 	return &TCPAddr{IP: ip.AsSlice(), Port: port}, nil
 }
 
+// TCPAddrFromAddrPort returns addr as a TCPAddr. If addr.IsValid() is false,
+// then the returned TCPAddr will contain a nil IP field, indicating an
+// address family-agnostic unspecified address.
+func TCPAddrFromAddrPort(addr netip.AddrPort) *TCPAddr {
+	return &TCPAddr{
+		IP:   addr.Addr().AsSlice(),
+		Zone: addr.Addr().Zone(),
+		Port: int(addr.Port()),
+	}
+}
+
 // TCPConn is an implementation of the Conn interface for TCP network
 // connections.
 type TCPConn struct {
@@ -277,7 +288,7 @@ type listener struct {
 }
 
 func (l *listener) Accept() (Conn, error) {
-	fd, err := netdev.Accept(l.fd, netip.AddrPort{})
+	fd, raddr, err := netdev.Accept(l.fd)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +297,7 @@ func (l *listener) Accept() (Conn, error) {
 		fd:    fd,
 		net:   "tcp",
 		laddr: l.laddr,
+		raddr: TCPAddrFromAddrPort(raddr),
 	}, nil
 }
 
@@ -303,8 +315,7 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 		return nil, err
 	}
 
-	lip, _ := netip.AddrFromSlice(laddr.IP)
-	laddrport := netip.AddrPortFrom(lip, uint16(laddr.Port))
+	laddrport := laddr.AddrPort()
 	err = netdev.Bind(fd, laddrport)
 	if err != nil {
 		return nil, err
