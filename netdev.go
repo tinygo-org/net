@@ -95,7 +95,7 @@ type netdever interface {
 	Bind(sockfd int, ip netip.AddrPort) error
 	Connect(sockfd int, host string, ip netip.AddrPort) error
 	Listen(sockfd int, backlog int) error
-	Accept(sockfd int, ip netip.AddrPort) (int, error)
+	Accept(sockfd int) (int, netip.AddrPort, error)
 
 	// # Flags argument on Send and Recv
 	//
