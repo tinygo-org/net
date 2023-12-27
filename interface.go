@@ -76,6 +76,15 @@ func Interfaces() ([]Interface, error) {
 	return nil, errors.New("Interfaces not implemented")
 }
 
+// InterfaceAddrs returns a list of the system's unicast interface
+// addresses.
+//
+// The returned list does not identify the associated interface; use
+// Interfaces and Interface.Addrs for more detail.
+func InterfaceAddrs() ([]Addr, error) {
+	return nil, errors.New("InterfaceAddrs not implemented")
+}
+
 // InterfaceByIndex returns the interface specified by index.
 //
 // On Solaris, it returns one of the logical network interfaces
