@@ -9,6 +9,7 @@
 package net
 
 import (
+	"crypto/tls"
 	"internal/itoa"
 	"io"
 	"net/netip"
@@ -125,6 +126,11 @@ func (c *TLSConn) SetReadDeadline(t time.Time) error {
 func (c *TLSConn) SetWriteDeadline(t time.Time) error {
 	c.writeDeadline = t
 	return nil
+}
+
+func (c *TLSConn) ConnectionState() tls.ConnectionState {
+	panic("TLSConn.ConnectionState() not implemented")
+	return tls.ConnectionState{}
 }
 
 // Handshake runs the client or server handshake
