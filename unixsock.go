@@ -12,6 +12,8 @@ package net
 // BUG(mikio): On Windows, methods and functions related to UnixConn
 // and UnixListener don't work for "unixgram" and "unixpacket".
 
+// BUG(paralin): On TinyGo, Unix sockets are not implemented.
+
 // UnixAddr represents the address of a Unix domain socket end point.
 type UnixAddr struct {
 	Name string
@@ -40,4 +42,19 @@ func (a *UnixAddr) opAddr() Addr {
 		return nil
 	}
 	return a
+}
+
+// ResolveUnixAddr returns an address of Unix domain socket end point.
+//
+// The network must be a Unix network name.
+//
+// See func [Dial] for a description of the network and address
+// parameters.
+func ResolveUnixAddr(network, address string) (*UnixAddr, error) {
+	switch network {
+	case "unix", "unixgram", "unixpacket":
+		return &UnixAddr{Name: address, Net: network}, nil
+	default:
+		return nil, UnknownNetworkError(network)
+	}
 }
