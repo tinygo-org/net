@@ -296,6 +296,12 @@ func (e *AddrError) Error() string {
 	return s
 }
 
+type UnknownNetworkError string
+
+func (e UnknownNetworkError) Error() string   { return "unknown network " + string(e) }
+func (e UnknownNetworkError) Timeout() bool   { return false }
+func (e UnknownNetworkError) Temporary() bool { return false }
+
 // errNetClosing is the type of the variable ErrNetClosing.
 // This is used to implement the net.Error interface.
 type errNetClosing struct{}
