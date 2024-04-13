@@ -7,6 +7,7 @@
 package net
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"internal/itoa"
@@ -117,6 +118,35 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 	}
 
 	return &TCPAddr{IP: ip.AsSlice(), Port: port}, nil
+}
+
+// ResolveIPAddr returns an address of IP end point.
+//
+// The network must be an IP network name.
+//
+// If the host in the address parameter is not a literal IP address,
+// ResolveIPAddr resolves the address to an address of IP end point.
+// Otherwise, it parses the address as a literal IP address.
+// The address parameter can use a host name, but this is not
+// recommended, because it will return at most one of the host name's
+// IP addresses.
+//
+// See func [Dial] for a description of the network and address
+// parameters.
+func ResolveIPAddr(network, address string) (*IPAddr, error) {
+	if network == "" { // a hint wildcard for Go 1.0 undocumented behavior
+		network = "ip"
+	}
+	afnet, _, err := parseNetwork(context.Background(), network, false)
+	if err != nil {
+		return nil, err
+	}
+	switch afnet {
+	case "ip", "ip4", "ip6":
+	default:
+		return nil, UnknownNetworkError(network)
+	}
+	return nil, errors.New("tcpsock:ResolveIPAddr not implemented")
 }
 
 // TCPAddrFromAddrPort returns addr as a TCPAddr. If addr.IsValid() is false,

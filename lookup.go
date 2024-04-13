@@ -7,6 +7,7 @@
 package net
 
 import (
+	"context"
 	"errors"
 )
 
@@ -16,4 +17,10 @@ import (
 // Resolver.LookupPort.
 func LookupPort(network, service string) (port int, err error) {
 	return 0, errors.New("net:LookupPort not implemented")
+}
+
+// lookupProtocol looks up IP protocol name in /etc/protocols and
+// returns correspondent protocol number.
+func lookupProtocol(_ context.Context, name string) (int, error) {
+	return 0, errors.New("net:lookupProtocol not implemented")
 }
