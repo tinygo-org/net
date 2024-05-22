@@ -3,6 +3,7 @@
 package net
 
 import (
+	"errors"
 	"net/netip"
 	"time"
 )
@@ -24,8 +25,11 @@ const (
 	_F_SETFL     = 0x4
 )
 
-// netdev is the current netdev, set by the application with useNetdev()
-var netdev netdever
+// netdev is the current netdev, set by the application with useNetdev().
+//
+// Initialized to a NOP netdev that errors out cleanly in case netdev was not
+// explicitly set with useNetdev().
+var netdev netdever = &nopNetdev{}
 
 // (useNetdev is go:linkname'd from tinygo/drivers package)
 func useNetdev(dev netdever) {
@@ -138,4 +142,34 @@ type netdever interface {
 	// In Go we provide developers with an `any` interface to be able
 	// to pass driver-specific configurations.
 	SetSockOpt(sockfd int, level int, opt int, value interface{}) error
+}
+
+var ErrNetdevNotSet = errors.New("Netdev not set")
+
+// nopNetdev is a NOP netdev that errors out any interface calls
+type nopNetdev struct {
+}
+
+func (n *nopNetdev) GetHostByName(name string) (netip.Addr, error) {
+	return netip.Addr{}, ErrNetdevNotSet
+}
+func (n *nopNetdev) Addr() (netip.Addr, error) { return netip.Addr{}, ErrNetdevNotSet }
+func (n *nopNetdev) Socket(domain int, stype int, protocol int) (sockfd int, _ error) {
+	return -1, ErrNetdevNotSet
+}
+func (n *nopNetdev) Bind(sockfd int, ip netip.AddrPort) error                 { return ErrNetdevNotSet }
+func (n *nopNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error { return ErrNetdevNotSet }
+func (n *nopNetdev) Listen(sockfd int, backlog int) error                     { return ErrNetdevNotSet }
+func (n *nopNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
+	return -1, netip.AddrPort{}, ErrNetdevNotSet
+}
+func (n *nopNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
+	return -1, ErrNetdevNotSet
+}
+func (n *nopNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
+	return -1, ErrNetdevNotSet
+}
+func (n *nopNetdev) Close(sockfd int) error { return ErrNetdevNotSet }
+func (n *nopNetdev) SetSockOpt(sockfd int, level int, opt int, value interface{}) error {
+	return ErrNetdevNotSet
 }
