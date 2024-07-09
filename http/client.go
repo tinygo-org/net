@@ -410,6 +410,10 @@ func urlErrorOp(method string) string {
 // Any returned error will be of type *url.Error. The url.Error
 // value's Timeout method will report true if the request timed out.
 func (c *Client) Do(req *Request) (*Response, error) {
+	if c.Transport != nil {
+		return c.Transport.RoundTrip(req)
+	}
+
 	return c.do(req)
 }
 

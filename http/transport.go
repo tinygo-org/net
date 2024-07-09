@@ -20,3 +20,12 @@ type readTrackingBody struct {
 	didRead  bool
 	didClose bool
 }
+
+type Transport struct{}
+
+var DefaultTransport RoundTripper = &Transport{}
+
+// roundTrip implements a RoundTripper over HTTP.
+func (t *Transport) RoundTrip(req *Request) (*Response, error) {
+	return roundTrip(req)
+}
