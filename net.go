@@ -193,6 +193,12 @@ type Listener interface {
 	Addr() Addr
 }
 
+type UnknownNetworkError string
+
+func (e UnknownNetworkError) Error() string   { return "unknown network " + string(e) }
+func (e UnknownNetworkError) Timeout() bool   { return false }
+func (e UnknownNetworkError) Temporary() bool { return false }
+
 // An Error represents a network error.
 type Error interface {
 	error
