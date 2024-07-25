@@ -11,7 +11,7 @@ device.  See drivers/netdev for more information on netdev.
 - [Using "net" and "net/http" Packages](#using-net-and-nethttp-packages)
 - ["net" Package](#net-package)
 - [Maintaining "net"](#maintaining-net)
- 
+
 ## Using "net" and "net/http" Packages
 
 See README-net.md in drivers repo to more details on using "net" and "net/http"
@@ -28,6 +28,10 @@ there is no mark, it is a straight copy.
 src/net
 ├── dial.go			*
 ├── http
+│   ├── httptest
+│   │   ├── httptest.go		*
+│   │   ├── recorder.go
+│   │   └── server.go		*
 │   ├── client.go		*
 │   ├── clone.go
 │   ├── cookie.go
