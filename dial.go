@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"internal/bytealg"
 	"syscall"
 	"time"
 )
@@ -189,6 +190,38 @@ func (lc *ListenConfig) Listen(ctx context.Context, network, address string) (Li
 // parameters.
 func (lc *ListenConfig) ListenPacket(ctx context.Context, network, address string) (PacketConn, error) {
 	return nil, errors.New("dial:ListenConfig:ListenPacket not implemented")
+}
+
+func parseNetwork(ctx context.Context, network string, needsProto bool) (afnet string, proto int, err error) {
+	i := bytealg.LastIndexByteString(network, ':')
+	if i < 0 { // no colon
+		switch network {
+		case "tcp", "tcp4", "tcp6":
+		case "udp", "udp4", "udp6":
+		case "ip", "ip4", "ip6":
+			if needsProto {
+				return "", 0, UnknownNetworkError(network)
+			}
+		case "unix", "unixgram", "unixpacket":
+		default:
+			return "", 0, UnknownNetworkError(network)
+		}
+		return network, 0, nil
+	}
+	afnet = network[:i]
+	switch afnet {
+	case "ip", "ip4", "ip6":
+		protostr := network[i+1:]
+		proto, i, ok := dtoi(protostr)
+		if !ok || i != len(protostr) {
+			proto, err = lookupProtocol(ctx, protostr)
+			if err != nil {
+				return "", 0, err
+			}
+		}
+		return afnet, proto, nil
+	}
+	return "", 0, UnknownNetworkError(network)
 }
 
 // Listen announces on the local network address.
