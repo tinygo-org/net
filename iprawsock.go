@@ -63,6 +63,23 @@ func (a *IPAddr) opAddr() Addr {
 	return a
 }
 
+// ResolveIPAddr returns an address of IP end point.
+//
+// The network must be an IP network name.
+//
+// If the host in the address parameter is not a literal IP address,
+// ResolveIPAddr resolves the address to an address of IP end point.
+// Otherwise, it parses the address as a literal IP address.
+// The address parameter can use a host name, but this is not
+// recommended, because it will return at most one of the host name's
+// IP addresses.
+//
+// See func [Dial] for a description of the network and address
+// parameters.
+func ResolveIPAddr(network, address string) (*IPAddr, error) {
+	return nil, errors.New("ResolveIPAddr not implemented")
+}
+
 // IPConn is the implementation of the Conn and PacketConn interfaces
 // for IP network connections.
 type IPConn struct {
