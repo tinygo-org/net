@@ -2361,6 +2361,33 @@ func (mux *ServeMux) match(path string) (h Handler, pattern string) {
 		return v.h, v.pattern
 	}
 
+	// Check for longest valid match with path placeholders (like /users/{id})
+	// First collect all potential matching patterns
+	var matchingPatterns []string
+	for registeredPattern := range mux.m {
+		// Skip patterns ending with "/" as they are handled separately
+		if registeredPattern[len(registeredPattern)-1] == '/' {
+			continue
+		}
+
+		// If the pattern contains placeholders and could match the path
+		if strings.Contains(registeredPattern, "{") && strings.Contains(registeredPattern, "}") {
+			if patternCouldMatch(registeredPattern, path) {
+				matchingPatterns = append(matchingPatterns, registeredPattern)
+			}
+		}
+	}
+
+	// Find the longest matching pattern
+	if len(matchingPatterns) > 0 {
+		sort.Slice(matchingPatterns, func(i, j int) bool {
+			return len(matchingPatterns[i]) > len(matchingPatterns[j])
+		})
+
+		pattern = matchingPatterns[0]
+		return mux.m[pattern].h, pattern
+	}
+
 	// Check for longest valid match.  mux.es contains all patterns
 	// that end in / sorted from longest to shortest.
 	for _, e := range mux.es {
@@ -2369,6 +2396,33 @@ func (mux *ServeMux) match(path string) (h Handler, pattern string) {
 		}
 	}
 	return nil, ""
+}
+
+// patternCouldMatch checks if a pattern with placeholders could match the given path.
+// It handles patterns like /users/{id}/orders/{orderId}.
+func patternCouldMatch(pattern, path string) bool {
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+
+	// If they have different number of parts, they can't match
+	if len(patternParts) != len(pathParts) {
+		return false
+	}
+
+	// Check each part
+	for i, patternPart := range patternParts {
+		// If it's a placeholder, it matches anything
+		if strings.HasPrefix(patternPart, "{") && strings.HasSuffix(patternPart, "}") {
+			continue
+		}
+
+		// If it's not a placeholder, it must match exactly
+		if patternPart != pathParts[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // redirectToPathSlash determines if the given path needs appending "/" to it.
@@ -2480,6 +2534,36 @@ func (mux *ServeMux) handler(host, path string) (h Handler, pattern string) {
 	return
 }
 
+// extractPathValues extracts path parameter values from a URL path based on a pattern.
+// It handles patterns with placeholders like /users/{id}/orders/{orderId}
+// and returns a map of parameter names to their values.
+func extractPathValues(pattern, path string) map[string]string {
+	pathValues := make(map[string]string)
+
+	// Split both pattern and path by "/"
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+
+	// If they have different lengths, they can't match (unless the pattern has a wildcard)
+	if len(patternParts) != len(pathParts) {
+		return pathValues
+	}
+
+	// Compare each part
+	for i, patternPart := range patternParts {
+		if strings.HasPrefix(patternPart, "{") && strings.HasSuffix(patternPart, "}") {
+			// This is a placeholder like {id}
+			paramName := patternPart[1 : len(patternPart)-1]
+			pathValues[paramName] = pathParts[i]
+		} else if patternPart != pathParts[i] {
+			// If a non-placeholder part doesn't match, return empty
+			return make(map[string]string)
+		}
+	}
+
+	return pathValues
+}
+
 // ServeHTTP dispatches the request to the handler whose
 // pattern most closely matches the request URL.
 func (mux *ServeMux) ServeHTTP(w ResponseWriter, r *Request) {
@@ -2490,7 +2574,18 @@ func (mux *ServeMux) ServeHTTP(w ResponseWriter, r *Request) {
 		w.WriteHeader(StatusBadRequest)
 		return
 	}
-	h, _ := mux.Handler(r)
+	h, pattern := mux.Handler(r)
+
+	// Extract path values for patterns that contain placeholders like {id}
+	if strings.Contains(pattern, "{") && strings.Contains(pattern, "}") {
+		pathValues := extractPathValues(pattern, r.URL.Path)
+
+		// Set path values in the request
+		for name, value := range pathValues {
+			r.SetPathValue(name, value)
+		}
+	}
+
 	h.ServeHTTP(w, r)
 }
 
