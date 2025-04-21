@@ -1476,18 +1476,15 @@ func (r *Request) requiresHTTP1() bool {
 		ascii.EqualFold(r.Header.Get("Upgrade"), "websocket")
 }
 
-// PathValue returns the value of a path parameter from the request URL.
-// For example, for a pattern "/users/{id}" and request URL "/users/123",
-// r.PathValue("id") would return "123".
-// If the parameter is not found, an empty string is returned.
+// PathValue returns the value for the named path wildcard in the [ServeMux] pattern
+// that matched the request.
+// It returns the empty string if the request was not matched against a pattern
+// or there is no such wildcard in the pattern.
 func (r *Request) PathValue(name string) string {
-	if i := r.patIndex(name); i >= 0 && i < len(r.matches) {
+	if i := r.patIndex(name); i >= 0 {
 		return r.matches[i]
 	}
-	if r.otherValues != nil {
-		return r.otherValues[name]
-	}
-	return ""
+	return r.otherValues[name]
 }
 
 // SetPathValue sets name to value, so that subsequent calls to r.PathValue(name)
