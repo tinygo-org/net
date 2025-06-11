@@ -336,6 +336,11 @@ type Request struct {
 	// TINYGO: Add onEOF func for callback when response is fully read
 	// TINYGO: so we can close the connection.
 	onEOF func()
+
+	// The following fields are for requests matched by ServeMux.
+	pat         *pattern          // the pattern that matched
+	matches     []string          // values for the matching wildcards in pat
+	otherValues map[string]string // for calls to SetPathValue that don't match a wildcard
 }
 
 // Context returns the request's context. To change the context, use
@@ -403,6 +408,20 @@ func (r *Request) Clone(ctx context.Context) *Request {
 	r2.Form = cloneURLValues(r.Form)
 	r2.PostForm = cloneURLValues(r.PostForm)
 	r2.MultipartForm = cloneMultipartForm(r.MultipartForm)
+
+	// Copy matches and otherValues. See issue 61410.
+	if s := r.matches; s != nil {
+		s2 := make([]string, len(s))
+		copy(s2, s)
+		r2.matches = s2
+	}
+	if s := r.otherValues; s != nil {
+		s2 := make(map[string]string, len(s))
+		for k, v := range s {
+			s2[k] = v
+		}
+		r2.otherValues = s2
+	}
 	return r2
 }
 
@@ -1455,4 +1474,48 @@ func requestMethodUsuallyLacksBody(method string) bool {
 func (r *Request) requiresHTTP1() bool {
 	return hasToken(r.Header.Get("Connection"), "upgrade") &&
 		ascii.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+// PathValue returns the value for the named path wildcard in the [ServeMux] pattern
+// that matched the request.
+// It returns the empty string if the request was not matched against a pattern
+// or there is no such wildcard in the pattern.
+func (r *Request) PathValue(name string) string {
+	if i := r.patIndex(name); i >= 0 {
+		return r.matches[i]
+	}
+	return r.otherValues[name]
+}
+
+// SetPathValue sets name to value, so that subsequent calls to r.PathValue(name)
+// return value.
+func (r *Request) SetPathValue(name, value string) {
+	if i := r.patIndex(name); i >= 0 {
+		r.matches[i] = value
+	} else {
+		if r.otherValues == nil {
+			r.otherValues = map[string]string{}
+		}
+		r.otherValues[name] = value
+	}
+}
+
+// patIndex returns the index of name in the list of named wildcards of the
+// request's pattern, or -1 if there is no such name.
+func (r *Request) patIndex(name string) int {
+	// The linear search seems expensive compared to a map, but just creating the map
+	// takes a lot of time, and most patterns will just have a couple of wildcards.
+	if r.pat == nil {
+		return -1
+	}
+	i := 0
+	for _, seg := range r.pat.segments {
+		if seg.wild && seg.s != "" {
+			if name == seg.s {
+				return i
+			}
+			i++
+		}
+	}
+	return -1
 }
