@@ -61,6 +61,7 @@ type wasip2Socket interface {
 	Close() error
 	Listen(backlog int) error
 	Bind(globalNetwork instancenetwork.Network, ip network.IPSocketAddress) error
+	Connect(globalNetwork instancenetwork.Network, host string, ip network.IPSocketAddress) error
 	Accept() (wasip2Socket, *network.IPSocketAddress, error)
 }
 
@@ -154,8 +155,13 @@ func (n *wasip2Netdev) Bind(sockfd int, ip netip.AddrPort) error {
 }
 
 func (n *wasip2Netdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
-	fmt.Println("wasip2 TODO Connect", sockfd, host, ip) ///
-	return errors.New("wasip2 TODO Connect")
+	sock, ok := n.fds[sockfd]
+	if !ok {
+		fmt.Println("wasip2: invalid socket fd") ///
+		return errors.New("wasip2: invalid socket fd")
+	}
+
+	return sock.Connect(n.net, host, TinygoToWasiAddr(ip))
 }
 
 func (n *wasip2Netdev) Listen(sockfd int, backlog int) error {
