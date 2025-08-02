@@ -35,17 +35,17 @@ type tcpServerSocket struct {
 }
 
 func (s tcpServerSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
-	fmt.Printf("TODO server")
+	fmt.Println("TODO server Recv") ///
 	return 0, nil
 }
 
 func (s tcpServerSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
-	fmt.Printf("TODO server")
+	fmt.Println("TODO server Send") ///
 	return 0, nil
 }
 
 func (s tcpServerSocket) Close() error {
-	fmt.Printf("TODO server")
+	fmt.Println("TODO server Close") ///
 	return nil
 }
 
@@ -129,7 +129,7 @@ type tcpSocket struct {
 
 func (c tcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
-		fmt.Println("wasip2 TCP send does not support flags:", flags) ///
+		fmt.Println("wasip2 TCP send flags TODO:", flags) ///
 	}
 
 	res := c.BlockingWriteAndFlush(cm.ToList([]uint8(buf)))
@@ -142,7 +142,7 @@ func (c tcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) 
 
 func (c tcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
-		fmt.Println("wasip2 TCP recv does not support flags:", flags) ///
+		fmt.Println("wasip2 TCP recv flags TODO:", flags) ///
 	}
 
 	res := c.BlockingRead(uint64(len(buf)))
@@ -167,14 +167,14 @@ func (c tcpSocket) Close() error {
 }
 
 func (s tcpSocket) Bind(globalNetwork instancenetwork.Network, addr network.IPSocketAddress) error {
-	fmt.Printf("TODO client") ///
+	fmt.Println("TODO client Bind") ///
 	return nil
 }
 func (s tcpSocket) Listen(backlog int) error {
-	fmt.Printf("TODO client") ///
+	fmt.Println("TODO client Listen") ///
 	return nil
 }
 func (s tcpSocket) Accept() (wasip2Socket, *network.IPSocketAddress, error) {
-	fmt.Printf("TODO client") ///
+	fmt.Println("TODO client Accept") ///
 	return nil, nil, nil
 }
