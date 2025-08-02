@@ -134,6 +134,11 @@ func (n *wasip2Netdev) Socket(domain int, stype int, protocol int) (sockfd int, 
 		if err != nil {
 			return -1, err
 		}
+	case _SOCK_DGRAM:
+		sock, err = createUDPSocket(af)
+		if err != nil {
+			return -1, err
+		}
 	default:
 		return -1, fmt.Errorf("wasip2: unsupported socket type %d", stype)
 	}
