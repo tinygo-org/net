@@ -16,6 +16,13 @@ import (
 	tcpcreatesocket "internal/wasi/sockets/v0.2.0/tcp-create-socket"
 )
 
+type wasip2TcpSocket struct {
+	tcpcreatesocket.TCPSocket
+	tcp.Pollable
+	*streams.InputStream
+	*streams.OutputStream
+}
+
 func createTCPSocket(af network.IPAddressFamily) (wasip2Socket, error) {
 	res := tcpcreatesocket.CreateTCPSocket(af)
 	if res.IsErr() {
@@ -23,33 +30,13 @@ func createTCPSocket(af network.IPAddressFamily) (wasip2Socket, error) {
 	}
 
 	sock := res.OK()
-	return tcpServerSocket{
-		TCPSocket: sock,
+	return &wasip2TcpSocket{
+		TCPSocket: *sock,
 		Pollable:  sock.Subscribe(),
 	}, nil
 }
 
-type tcpServerSocket struct {
-	*tcpcreatesocket.TCPSocket
-	tcp.Pollable
-}
-
-func (s tcpServerSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
-	fmt.Println("TODO server Recv") ///
-	return 0, nil
-}
-
-func (s tcpServerSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
-	fmt.Println("TODO server Send") ///
-	return 0, nil
-}
-
-func (s tcpServerSocket) Close() error {
-	fmt.Println("TODO server Close") ///
-	return nil
-}
-
-func (s tcpServerSocket) Bind(globalNetwork instancenetwork.Network, addr network.IPSocketAddress) error {
+func (s *wasip2TcpSocket) Bind(globalNetwork instancenetwork.Network, addr network.IPSocketAddress) error {
 	res := s.StartBind(globalNetwork, addr)
 	if res.IsErr() {
 		return fmt.Errorf("failed to start binding socket: %s", res.Err().String())
@@ -63,7 +50,7 @@ func (s tcpServerSocket) Bind(globalNetwork instancenetwork.Network, addr networ
 	return nil
 }
 
-func (s tcpServerSocket) Listen(backlog int) error {
+func (s *wasip2TcpSocket) Listen(backlog int) error {
 	res := s.StartListen()
 	if res.IsErr() {
 		return fmt.Errorf("failed to start listening on socket: %s", res.Err().String())
@@ -77,7 +64,7 @@ func (s tcpServerSocket) Listen(backlog int) error {
 	return nil
 }
 
-func (s tcpServerSocket) Accept() (wasip2Socket, *network.IPSocketAddress, error) {
+func (s *wasip2TcpSocket) Accept() (wasip2Socket, *network.IPSocketAddress, error) {
 	var clientSocket *tcpcreatesocket.TCPSocket
 	var inStream *streams.InputStream
 	var outStream *streams.OutputStream
@@ -112,24 +99,43 @@ func (s tcpServerSocket) Accept() (wasip2Socket, *network.IPSocketAddress, error
 		return nil, nil, fmt.Errorf("failed to get remote address: %s", raddrRes.Err().String())
 	}
 
-	sock := tcpSocket{
-		TCPSocket:    clientSocket,
+	return &wasip2TcpSocket{
+		TCPSocket:    *clientSocket,
+		Pollable:     clientSocket.Subscribe(),
 		InputStream:  inStream,
 		OutputStream: outStream,
+	}, raddrRes.OK(), nil
+}
+
+func (s *wasip2TcpSocket) Connect(globalNetwork instancenetwork.Network, host string, ip network.IPSocketAddress) error {
+	res := s.StartConnect(globalNetwork, ip)
+	if res.IsErr() {
+		return fmt.Errorf("failed to start connecting socket: %s", res.Err().String())
 	}
 
-	return sock, raddrRes.OK(), nil
+	for {
+		connRes := s.FinishConnect()
+		if connRes.IsOK() {
+			s.InputStream, s.OutputStream = &connRes.OK().F0, &connRes.OK().F1
+			return nil
+		}
+
+		if *connRes.Err() == network.ErrorCodeWouldBlock {
+			s.Block()
+			continue
+		}
+
+		return fmt.Errorf("failed to finish connecting socket: %s", connRes.Err().String())
+	}
 }
 
-type tcpSocket struct {
-	*tcpcreatesocket.TCPSocket
-	*streams.InputStream
-	*streams.OutputStream
-}
-
-func (c tcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
+func (c wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
 		fmt.Println("wasip2 TCP send flags TODO:", flags) ///
+	}
+
+	if c.OutputStream == nil {
+		return -1, fmt.Errorf("send called on a socket without open streams")
 	}
 
 	res := c.BlockingWriteAndFlush(cm.ToList([]uint8(buf)))
@@ -140,9 +146,13 @@ func (c tcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) 
 	return len(buf), nil
 }
 
-func (c tcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
+func (c wasip2TcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
 		fmt.Println("wasip2 TCP recv flags TODO:", flags) ///
+	}
+
+	if c.InputStream == nil {
+		return -1, fmt.Errorf("recv called on a socket without open streams")
 	}
 
 	res := c.BlockingRead(uint64(len(buf)))
@@ -153,28 +163,20 @@ func (c tcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) 
 	return copy(buf, res.OK().Slice()), nil
 }
 
-func (c tcpSocket) Close() error {
+func (c wasip2TcpSocket) Close() error {
 	res := c.TCPSocket.Shutdown(tcp.ShutdownTypeBoth)
 	if res.IsErr() {
 		return fmt.Errorf("failed to shutdown client socket: %s", res.Err().String())
 	}
 
-	c.InputStream.ResourceDrop()
-	c.OutputStream.ResourceDrop()
+	if c.InputStream != nil {
+		c.InputStream.ResourceDrop()
+	}
+	if c.OutputStream != nil {
+		c.OutputStream.ResourceDrop()
+	}
+	c.Pollable.ResourceDrop()
 	c.TCPSocket.ResourceDrop()
 
 	return nil
-}
-
-func (s tcpSocket) Bind(globalNetwork instancenetwork.Network, addr network.IPSocketAddress) error {
-	fmt.Println("TODO client Bind") ///
-	return nil
-}
-func (s tcpSocket) Listen(backlog int) error {
-	fmt.Println("TODO client Listen") ///
-	return nil
-}
-func (s tcpSocket) Accept() (wasip2Socket, *network.IPSocketAddress, error) {
-	fmt.Println("TODO client Accept") ///
-	return nil, nil, nil
 }
