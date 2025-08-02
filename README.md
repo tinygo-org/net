@@ -32,6 +32,8 @@ src/net
 │   │   ├── httptest.go		*
 │   │   ├── recorder.go
 │   │   └── server.go		*
+│   ├── httptest
+│   │   └── trace.go		*
 │   ├── client.go		*
 │   ├── clone.go
 │   ├── cookie.go
