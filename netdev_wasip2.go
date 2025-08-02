@@ -11,6 +11,7 @@ import (
 	"time"
 
 	instancenetwork "internal/wasi/sockets/v0.2.0/instance-network"
+	ipnamelookup "internal/wasi/sockets/v0.2.0/ip-name-lookup"
 	"internal/wasi/sockets/v0.2.0/network"
 )
 
@@ -78,10 +79,33 @@ func init() {
 	})
 }
 
-// TODO: use ip-name-lookup
 func (n *wasip2Netdev) GetHostByName(name string) (netip.Addr, error) {
-	fmt.Println("wasip2 TODO GetHostByName") ///
-	return netip.Addr{}, errors.New("wasip2 TODO GetHostByName")
+	res := ipnamelookup.ResolveAddresses(n.net, name)
+
+	if res.IsErr() {
+		return netip.Addr{}, fmt.Errorf("failed to resolve address: %s", res.Err().String())
+	}
+
+	stream := res.OK()
+	pollable := stream.Subscribe()
+
+	for {
+		pollable.Block()
+		res := stream.ResolveNextAddress()
+
+		if res.IsErr() {
+			return netip.Addr{}, fmt.Errorf("failed to get resolved address: %s", res.Err().String())
+		}
+
+		if res.OK().None() {
+			return netip.Addr{}, errors.New("no addresses found")
+		}
+
+		// TODO: handle IPv6
+		if addr4 := res.OK().Some().IPv4(); addr4 != nil {
+			return netip.AddrFrom4(*addr4), nil
+		}
+	}
 }
 
 func (n *wasip2Netdev) Addr() (netip.Addr, error) {
