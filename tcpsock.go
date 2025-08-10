@@ -108,7 +108,7 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 	}
 
 	if host == "" {
-		return &TCPAddr{Port: port}, nil
+		return &TCPAddr{IP: []byte{0, 0, 0, 0}, Port: port}, nil
 	}
 
 	ip, err := netdev.GetHostByName(host)
