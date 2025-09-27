@@ -131,7 +131,7 @@ func (s *wasip2TcpSocket) Connect(globalNetwork instancenetwork.Network, host st
 
 func (c wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
-		fmt.Println("wasip2 TCP send flags TODO:", flags) ///
+		return -1, fmt.Errorf("wasip2 TCP send flags TODO:", flags)
 	}
 
 	if c.OutputStream == nil {
@@ -148,7 +148,7 @@ func (c wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, e
 
 func (c wasip2TcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
-		fmt.Println("wasip2 TCP recv flags TODO:", flags) ///
+		return -1, fmt.Errorf("wasip2 TCP recv flags TODO:", flags)
 	}
 
 	if c.InputStream == nil {
