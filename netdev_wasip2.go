@@ -15,7 +15,9 @@ import (
 	"internal/wasi/sockets/v0.2.0/network"
 )
 
-func TinygoToWasiAddr(ip netip.AddrPort) network.IPSocketAddress {
+var errInvalidSocketFD = errors.New("wasip2: invalid socket fd")
+
+func tinygoToWasiAddr(ip netip.AddrPort) network.IPSocketAddress {
 	if ip.Addr().Is4() {
 		return network.IPSocketAddressIPv4(network.IPv4SocketAddress{
 			Port:    ip.Port(),
@@ -38,7 +40,7 @@ func TinygoToWasiAddr(ip netip.AddrPort) network.IPSocketAddress {
 	return network.IPSocketAddress{}
 }
 
-func WasiAddrToTinygo(addr network.IPSocketAddress) netip.AddrPort {
+func wasiAddrToTinygo(addr network.IPSocketAddress) netip.AddrPort {
 	if addr4 := addr.IPv4(); addr4 != nil {
 		return netip.AddrPortFrom(netip.AddrFrom4(addr4.Address), addr4.Port)
 	}
@@ -110,7 +112,6 @@ func (n *wasip2Netdev) GetHostByName(name string) (netip.Addr, error) {
 }
 
 func (n *wasip2Netdev) Addr() (netip.Addr, error) {
-	fmt.Println("wasip2 TODO Addr") ///
 	return netip.Addr{}, errors.New("wasip2 TODO Addr")
 }
 
@@ -152,28 +153,25 @@ func (n *wasip2Netdev) Socket(domain int, stype int, protocol int) (sockfd int, 
 func (n *wasip2Netdev) Bind(sockfd int, ip netip.AddrPort) error {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return errors.New("wasip2: invalid socket fd")
+		return errInvalidSocketFD
 	}
 
-	return sock.Bind(n.net, TinygoToWasiAddr(ip))
+	return sock.Bind(n.net, tinygoToWasiAddr(ip))
 }
 
 func (n *wasip2Netdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return errors.New("wasip2: invalid socket fd")
+		return errInvalidSocketFD
 	}
 
-	return sock.Connect(n.net, host, TinygoToWasiAddr(ip))
+	return sock.Connect(n.net, host, tinygoToWasiAddr(ip))
 }
 
 func (n *wasip2Netdev) Listen(sockfd int, backlog int) error {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return errors.New("wasip2: invalid socket fd")
+		return errInvalidSocketFD
 	}
 
 	return sock.Listen(backlog)
@@ -182,8 +180,7 @@ func (n *wasip2Netdev) Listen(sockfd int, backlog int) error {
 func (n *wasip2Netdev) Accept(sockfd int) (int, netip.AddrPort, error) {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return -1, netip.AddrPort{}, errors.New("wasip2: invalid socket fd")
+		return -1, netip.AddrPort{}, errInvalidSocketFD
 	}
 
 	newSock, raddr, err := sock.Accept()
@@ -194,14 +191,13 @@ func (n *wasip2Netdev) Accept(sockfd int) (int, netip.AddrPort, error) {
 	fd := n.getNextFD()
 	n.fds[fd] = newSock
 
-	return fd, WasiAddrToTinygo(*raddr), nil
+	return fd, wasiAddrToTinygo(*raddr), nil
 }
 
 func (n *wasip2Netdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return -1, errors.New("wasip2: invalid socket fd")
+		return -1, errInvalidSocketFD
 	}
 
 	return sock.Send(buf, flags, deadline)
@@ -210,8 +206,7 @@ func (n *wasip2Netdev) Send(sockfd int, buf []byte, flags int, deadline time.Tim
 func (n *wasip2Netdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return -1, errors.New("wasip2: invalid socket fd")
+		return -1, errInvalidSocketFD
 	}
 
 	return sock.Recv(buf, flags, deadline)
@@ -220,8 +215,7 @@ func (n *wasip2Netdev) Recv(sockfd int, buf []byte, flags int, deadline time.Tim
 func (n *wasip2Netdev) Close(sockfd int) error {
 	sock, ok := n.fds[sockfd]
 	if !ok {
-		fmt.Println("wasip2: invalid socket fd") ///
-		return errors.New("wasip2: invalid socket fd")
+		return errInvalidSocketFD
 	}
 
 	delete(n.fds, sockfd)
@@ -230,6 +224,5 @@ func (n *wasip2Netdev) Close(sockfd int) error {
 }
 
 func (n *wasip2Netdev) SetSockOpt(sockfd int, level int, opt int, value interface{}) error {
-	fmt.Println("wasip2 setsockopt (TODO)", sockfd, level, opt, value) ///
 	return errors.New("wasip2 TODO set socket option")
 }

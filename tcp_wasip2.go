@@ -129,7 +129,7 @@ func (s *wasip2TcpSocket) Connect(globalNetwork instancenetwork.Network, host st
 	}
 }
 
-func (c wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
+func (c *wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
 		return -1, fmt.Errorf("wasip2 TCP send flags TODO:", flags)
 	}
@@ -154,7 +154,7 @@ func (c wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, e
 	return len(buf), nil
 }
 
-func (c wasip2TcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
+func (c *wasip2TcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, error) {
 	if flags != 0 {
 		return -1, fmt.Errorf("wasip2 TCP recv flags TODO:", flags)
 	}
@@ -171,7 +171,7 @@ func (c wasip2TcpSocket) Recv(buf []byte, flags int, deadline time.Time) (int, e
 	return copy(buf, res.OK().Slice()), nil
 }
 
-func (c wasip2TcpSocket) Close() error {
+func (c *wasip2TcpSocket) Close() error {
 	res := c.TCPSocket.Shutdown(tcp.ShutdownTypeBoth)
 	if res.IsErr() {
 		return fmt.Errorf("failed to shutdown client socket: %s", res.Err().String())
