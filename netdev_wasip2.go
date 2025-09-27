@@ -37,7 +37,9 @@ func tinygoToWasiAddr(ip netip.AddrPort) network.IPSocketAddress {
 		})
 	}
 
-	return network.IPSocketAddress{}
+	return network.IPSocketAddressIPv4(network.IPv4SocketAddress{
+		Port: ip.Port(),
+	})
 }
 
 func wasiAddrToTinygo(addr network.IPSocketAddress) netip.AddrPort {
