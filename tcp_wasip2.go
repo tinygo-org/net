@@ -138,7 +138,15 @@ func (c wasip2TcpSocket) Send(buf []byte, flags int, deadline time.Time) (int, e
 		return -1, fmt.Errorf("send called on a socket without open streams")
 	}
 
-	res := c.BlockingWriteAndFlush(cm.ToList([]uint8(buf)))
+	cw, err, iserr := c.CheckWrite().Result()
+	if iserr {
+		return -1, fmt.Errorf("failed to do check-write on the output stream: %s", err.String())
+	}
+	if cw < uint64(len(buf)) {
+		return -1, fmt.Errorf("failed to send: writeable %d < length %d", cw, len(buf))
+	}
+
+	res := c.Write(cm.ToList([]uint8(buf)))
 	if res.IsErr() {
 		return -1, fmt.Errorf("failed to write to output stream: %s", res.Err().String())
 	}
