@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -27,34 +27,33 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
-// A Client is an HTTP client. Its zero value (DefaultClient) is a
-// usable client that uses DefaultTransport.
+// A Client is an HTTP client. Its zero value ([DefaultClient]) is a
+// usable client that uses [DefaultTransport].
 //
-// The Client's Transport typically has internal state (cached TCP
+// The [Client.Transport] typically has internal state (cached TCP
 // connections), so Clients should be reused instead of created as
 // needed. Clients are safe for concurrent use by multiple goroutines.
 //
-// A Client is higher-level than a RoundTripper (such as Transport)
+// A Client is higher-level than a [RoundTripper] (such as [Transport])
 // and additionally handles HTTP details such as cookies and
 // redirects.
 //
 // When following redirects, the Client will forward all headers set on the
-// initial Request except:
+// initial [Request] except:
 //
-// • when forwarding sensitive headers like "Authorization",
-// "WWW-Authenticate", and "Cookie" to untrusted targets.
-// These headers will be ignored when following a redirect to a domain
-// that is not a subdomain match or exact match of the initial domain.
-// For example, a redirect from "foo.com" to either "foo.com" or "sub.foo.com"
-// will forward the sensitive headers, but a redirect to "bar.com" will not.
-//
-// • when forwarding the "Cookie" header with a non-nil cookie Jar.
-// Since each redirect may mutate the state of the cookie jar,
-// a redirect may possibly alter a cookie set in the initial request.
-// When forwarding the "Cookie" header, any mutated cookies will be omitted,
-// with the expectation that the Jar will insert those mutated cookies
-// with the updated values (assuming the origin matches).
-// If Jar is nil, the initial cookies are forwarded without change.
+//   - when forwarding sensitive headers like "Authorization",
+//     "WWW-Authenticate", and "Cookie" to untrusted targets.
+//     These headers will be ignored when following a redirect to a domain
+//     that is not a subdomain match or exact match of the initial domain.
+//     For example, a redirect from "foo.com" to either "foo.com" or "sub.foo.com"
+//     will forward the sensitive headers, but a redirect to "bar.com" will not.
+//   - when forwarding the "Cookie" header with a non-nil cookie Jar.
+//     Since each redirect may mutate the state of the cookie jar,
+//     a redirect may possibly alter a cookie set in the initial request.
+//     When forwarding the "Cookie" header, any mutated cookies will be omitted,
+//     with the expectation that the Jar will insert those mutated cookies
+//     with the updated values (assuming the origin matches).
+//     If Jar is nil, the initial cookies are forwarded without change.
 type Client struct {
 	// Transport specifies the mechanism by which individual
 	// HTTP requests are made.
@@ -106,11 +105,11 @@ type Client struct {
 	Timeout time.Duration
 }
 
-// DefaultClient is the default Client and is used by Get, Head, and Post.
+// DefaultClient is the default [Client] and is used by [Get], [Head], and [Post].
 var DefaultClient = &Client{}
 
 // RoundTripper is an interface representing the ability to execute a
-// single HTTP transaction, obtaining the Response for a given Request.
+// single HTTP transaction, obtaining the [Response] for a given [Request].
 //
 // A RoundTripper must be safe for concurrent use by multiple
 // goroutines.
@@ -144,8 +143,13 @@ type RoundTripper interface {
 
 // didTimeout is non-nil only if err != nil.
 func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
+	cookieURL := req.URL
+	if req.Host != "" {
+		cookieURL = cloneURL(cookieURL)
+		cookieURL.Host = req.Host
+	}
 	if c.Jar != nil {
-		for _, cookie := range c.Jar.Cookies(req.URL) {
+		for _, cookie := range c.Jar.Cookies(cookieURL) {
 			req.AddCookie(cookie)
 		}
 	}
@@ -155,7 +159,7 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 	}
 	if c.Jar != nil {
 		if rc := resp.Cookies(); len(rc) > 0 {
-			c.Jar.SetCookies(req.URL, rc)
+			c.Jar.SetCookies(cookieURL, rc)
 		}
 	}
 	return resp, nil, nil
@@ -327,7 +331,7 @@ func basicAuth(username, password string) string {
 //
 // An error is returned if there were too many redirects or if there
 // was an HTTP protocol error. A non-2xx response doesn't cause an
-// error. Any returned error will be of type *url.Error. The url.Error
+// error. Any returned error will be of type [*url.Error]. The url.Error
 // value's Timeout method will report true if the request timed out.
 //
 // When err is nil, resp always contains a non-nil resp.Body.
@@ -335,10 +339,10 @@ func basicAuth(username, password string) string {
 //
 // Get is a wrapper around DefaultClient.Get.
 //
-// To make a request with custom headers, use NewRequest and
+// To make a request with custom headers, use [NewRequest] and
 // DefaultClient.Do.
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
+// To make a request with a specified context.Context, use [NewRequestWithContext]
 // and DefaultClient.Do.
 func Get(url string) (resp *Response, err error) {
 	return DefaultClient.Get(url)
@@ -346,7 +350,7 @@ func Get(url string) (resp *Response, err error) {
 
 // Get issues a GET to the specified URL. If the response is one of the
 // following redirect codes, Get follows the redirect after calling the
-// Client's CheckRedirect function:
+// [Client.CheckRedirect] function:
 //
 //	301 (Moved Permanently)
 //	302 (Found)
@@ -354,18 +358,18 @@ func Get(url string) (resp *Response, err error) {
 //	307 (Temporary Redirect)
 //	308 (Permanent Redirect)
 //
-// An error is returned if the Client's CheckRedirect function fails
+// An error is returned if the [Client.CheckRedirect] function fails
 // or if there was an HTTP protocol error. A non-2xx response doesn't
-// cause an error. Any returned error will be of type *url.Error. The
+// cause an error. Any returned error will be of type [*url.Error]. The
 // url.Error value's Timeout method will report true if the request
 // timed out.
 //
 // When err is nil, resp always contains a non-nil resp.Body.
 // Caller should close resp.Body when done reading from it.
 //
-// To make a request with custom headers, use NewRequest and Client.Do.
+// To make a request with custom headers, use [NewRequest] and [Client.Do].
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
+// To make a request with a specified context.Context, use [NewRequestWithContext]
 // and Client.Do.
 func (c *Client) Get(url string) (resp *Response, err error) {
 	req, err := NewRequest("GET", url, nil)
@@ -398,20 +402,21 @@ func urlErrorOp(method string) string {
 // connectivity problem). A non-2xx status code doesn't cause an
 // error.
 //
-// If the returned error is nil, the Response will contain a non-nil
+// If the returned error is nil, the [Response] will contain a non-nil
 // Body which the user is expected to close. If the Body is not both
-// read to EOF and closed, the Client's underlying RoundTripper
-// (typically Transport) may not be able to re-use a persistent TCP
+// read to EOF and closed, the [Client]'s underlying [RoundTripper]
+// (typically [Transport]) may not be able to re-use a persistent TCP
 // connection to the server for a subsequent "keep-alive" request.
 //
 // The request Body, if non-nil, will be closed by the underlying
-// Transport, even on errors.
+// Transport, even on errors. The Body may be closed asynchronously after
+// Do returns.
 //
 // On error, any Response can be ignored. A non-nil Response with a
 // non-nil error only occurs when CheckRedirect fails, and even then
-// the returned Response.Body is already closed.
+// the returned [Response.Body] is already closed.
 //
-// Generally Get, Post, or PostForm will be used instead of Do.
+// Generally [Get], [Post], or [PostForm] will be used instead of Do.
 //
 // If the server replies with a redirect, the Client first uses the
 // CheckRedirect function to determine whether the redirect should be
@@ -419,11 +424,11 @@ func urlErrorOp(method string) string {
 // subsequent requests to use HTTP method GET
 // (or HEAD if the original request was HEAD), with no body.
 // A 307 or 308 redirect preserves the original HTTP method and body,
-// provided that the Request.GetBody function is defined.
-// The NewRequest function automatically sets GetBody for common
+// provided that the [Request.GetBody] function is defined.
+// The [NewRequest] function automatically sets GetBody for common
 // standard library body types.
 //
-// Any returned error will be of type *url.Error. The url.Error
+// Any returned error will be of type [*url.Error]. The url.Error
 // value's Timeout method will report true if the request timed out.
 func (c *Client) Do(req *Request) (*Response, error) {
 	if c.Transport != nil {
@@ -441,6 +446,7 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 			Err: errors.New("http: nil Request.URL"),
 		}
 	}
+	_ = *c // panic early if c is nil; see go.dev/issue/53521
 
 	var err error
 	var didTimeout func() bool
@@ -465,17 +471,17 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 //
 // Caller should close resp.Body when done reading from it.
 //
-// If the provided body is an io.Closer, it is closed after the
+// If the provided body is an [io.Closer], it is closed after the
 // request.
 //
 // Post is a wrapper around DefaultClient.Post.
 //
-// To set custom headers, use NewRequest and DefaultClient.Do.
+// To set custom headers, use [NewRequest] and DefaultClient.Do.
 //
-// See the Client.Do method documentation for details on how redirects
+// See the [Client.Do] method documentation for details on how redirects
 // are handled.
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
+// To make a request with a specified context.Context, use [NewRequestWithContext]
 // and DefaultClient.Do.
 func Post(url, contentType string, body io.Reader) (resp *Response, err error) {
 	return DefaultClient.Post(url, contentType, body)
@@ -485,15 +491,15 @@ func Post(url, contentType string, body io.Reader) (resp *Response, err error) {
 //
 // Caller should close resp.Body when done reading from it.
 //
-// If the provided body is an io.Closer, it is closed after the
+// If the provided body is an [io.Closer], it is closed after the
 // request.
 //
-// To set custom headers, use NewRequest and Client.Do.
+// To set custom headers, use [NewRequest] and [Client.Do].
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
-// and Client.Do.
+// To make a request with a specified context.Context, use [NewRequestWithContext]
+// and [Client.Do].
 //
-// See the Client.Do method documentation for details on how redirects
+// See the [Client.Do] method documentation for details on how redirects
 // are handled.
 func (c *Client) Post(url, contentType string, body io.Reader) (resp *Response, err error) {
 	req, err := NewRequest("POST", url, body)
@@ -508,17 +514,17 @@ func (c *Client) Post(url, contentType string, body io.Reader) (resp *Response, 
 // values URL-encoded as the request body.
 //
 // The Content-Type header is set to application/x-www-form-urlencoded.
-// To set other headers, use NewRequest and DefaultClient.Do.
+// To set other headers, use [NewRequest] and DefaultClient.Do.
 //
 // When err is nil, resp always contains a non-nil resp.Body.
 // Caller should close resp.Body when done reading from it.
 //
 // PostForm is a wrapper around DefaultClient.PostForm.
 //
-// See the Client.Do method documentation for details on how redirects
+// See the [Client.Do] method documentation for details on how redirects
 // are handled.
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
+// To make a request with a specified [context.Context], use [NewRequestWithContext]
 // and DefaultClient.Do.
 func PostForm(url string, data url.Values) (resp *Response, err error) {
 	return DefaultClient.PostForm(url, data)
@@ -528,15 +534,15 @@ func PostForm(url string, data url.Values) (resp *Response, err error) {
 // with data's keys and values URL-encoded as the request body.
 //
 // The Content-Type header is set to application/x-www-form-urlencoded.
-// To set other headers, use NewRequest and Client.Do.
+// To set other headers, use [NewRequest] and [Client.Do].
 //
 // When err is nil, resp always contains a non-nil resp.Body.
 // Caller should close resp.Body when done reading from it.
 //
-// See the Client.Do method documentation for details on how redirects
+// See the [Client.Do] method documentation for details on how redirects
 // are handled.
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
+// To make a request with a specified context.Context, use [NewRequestWithContext]
 // and Client.Do.
 func (c *Client) PostForm(url string, data url.Values) (resp *Response, err error) {
 	return c.Post(url, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
@@ -554,7 +560,7 @@ func (c *Client) PostForm(url string, data url.Values) (resp *Response, err erro
 //
 // Head is a wrapper around DefaultClient.Head.
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
+// To make a request with a specified [context.Context], use [NewRequestWithContext]
 // and DefaultClient.Do.
 func Head(url string) (resp *Response, err error) {
 	return DefaultClient.Head(url)
@@ -562,7 +568,7 @@ func Head(url string) (resp *Response, err error) {
 
 // Head issues a HEAD to the specified URL. If the response is one of the
 // following redirect codes, Head follows the redirect after calling the
-// Client's CheckRedirect function:
+// [Client.CheckRedirect] function:
 //
 //	301 (Moved Permanently)
 //	302 (Found)
@@ -570,8 +576,8 @@ func Head(url string) (resp *Response, err error) {
 //	307 (Temporary Redirect)
 //	308 (Permanent Redirect)
 //
-// To make a request with a specified context.Context, use NewRequestWithContext
-// and Client.Do.
+// To make a request with a specified [context.Context], use [NewRequestWithContext]
+// and [Client.Do].
 func (c *Client) Head(url string) (resp *Response, err error) {
 	req, err := NewRequest("HEAD", url, nil)
 	if err != nil {

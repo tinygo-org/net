@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -9,13 +9,23 @@ package net
 import (
 	"errors"
 	"fmt"
-	"internal/itoa"
 	"io"
 	"net/netip"
 	"strconv"
 	"syscall"
 	"time"
 )
+
+// KeepAliveConfig specifies the keep-alive probe configuration
+// for an active network connection, when supported by the
+// protocol and operating system.
+// TINYGO: Stub definition for compatibility; not used on embedded devices.
+type KeepAliveConfig struct {
+	Enable   bool
+	Idle     time.Duration
+	Interval time.Duration
+	Count    int
+}
 
 // TCPAddr represents the address of a TCP end point.
 type TCPAddr struct {
@@ -24,7 +34,7 @@ type TCPAddr struct {
 	Zone string // IPv6 scoped addressing zone
 }
 
-// AddrPort returns the TCPAddr a as a netip.AddrPort.
+// AddrPort returns the [TCPAddr] a as a [netip.AddrPort].
 //
 // If a.Port does not fit in a uint16, it's silently truncated.
 //
@@ -47,9 +57,9 @@ func (a *TCPAddr) String() string {
 	}
 	ip := ipEmptyString(a.IP)
 	if a.Zone != "" {
-		return JoinHostPort(ip+"%"+a.Zone, itoa.Itoa(a.Port))
+		return JoinHostPort(ip+"%"+a.Zone, strconv.Itoa(a.Port))
 	}
-	return JoinHostPort(ip, itoa.Itoa(a.Port))
+	return JoinHostPort(ip, strconv.Itoa(a.Port))
 }
 
 func (a *TCPAddr) isWildcard() bool {
@@ -79,7 +89,7 @@ func (a *TCPAddr) opAddr() Addr {
 // recommended, because it will return at most one of the host name's
 // IP addresses.
 //
-// See func Dial for a description of the network and address
+// See func [Dial] for a description of the network and address
 // parameters.
 func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 
@@ -119,7 +129,7 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 	return &TCPAddr{IP: ip.AsSlice(), Port: port}, nil
 }
 
-// TCPAddrFromAddrPort returns addr as a TCPAddr. If addr.IsValid() is false,
+// TCPAddrFromAddrPort returns addr as a [TCPAddr]. If addr.IsValid() is false,
 // then the returned TCPAddr will contain a nil IP field, indicating an
 // address family-agnostic unspecified address.
 func TCPAddrFromAddrPort(addr netip.AddrPort) *TCPAddr {
@@ -130,7 +140,7 @@ func TCPAddrFromAddrPort(addr netip.AddrPort) *TCPAddr {
 	}
 }
 
-// TCPConn is an implementation of the Conn interface for TCP network
+// TCPConn is an implementation of the [Conn] interface for TCP network
 // connections.
 type TCPConn struct {
 	fd            int
@@ -191,7 +201,7 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 // TINYGO: Use netdev for Conn methods: Read = Recv, Write = Send, etc.
 
 // SyscallConn returns a raw network connection.
-// This implements the syscall.Conn interface.
+// This implements the [syscall.Conn] interface.
 func (c *TCPConn) SyscallConn() (syscall.RawConn, error) {
 	return nil, errors.New("SyscallConn not implemented")
 }
@@ -262,7 +272,11 @@ func (c *TCPConn) SetKeepAlive(keepalive bool) error {
 	return netdev.SetSockOpt(c.fd, _SOL_SOCKET, _SO_KEEPALIVE, keepalive)
 }
 
-// SetKeepAlivePeriod sets period between keep-alives.
+// SetKeepAlivePeriod sets the duration the connection needs to
+// remain idle before TCP starts sending keepalive probes.
+//
+// Note that calling this method on Windows prior to Windows 10 version 1709
+// will reset the KeepAliveInterval to the default system value, which is normally 1 second.
 func (c *TCPConn) SetKeepAlivePeriod(d time.Duration) error {
 	// Units are 1/2 seconds
 	return netdev.SetSockOpt(c.fd, _SOL_TCP, _TCP_KEEPINTVL, 2*d.Seconds())

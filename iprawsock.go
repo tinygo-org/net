@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -8,6 +8,7 @@ package net
 
 import (
 	"errors"
+	"net/netip"
 	"syscall"
 )
 
@@ -26,8 +27,18 @@ import (
 // BUG(mikio): On JS and Plan 9, methods and functions related
 // to IPConn are not implemented.
 
-// BUG(mikio): On Windows, the File method of IPConn is not
-// implemented.
+// BUG: On Windows, raw IP sockets are restricted by the operating system.
+// Sending TCP data, sending UDP data with invalid source addresses,
+// and calling bind with TCP protocol don't work.
+//
+// See Winsock reference for details.
+
+func ipAddrFromAddr(addr netip.Addr) *IPAddr {
+	return &IPAddr{
+		IP:   addr.AsSlice(),
+		Zone: addr.Zone(),
+	}
+}
 
 // IPAddr represents the address of an IP end point.
 type IPAddr struct {
@@ -80,14 +91,14 @@ func ResolveIPAddr(network, address string) (*IPAddr, error) {
 	return nil, errors.New("ResolveIPAddr not implemented")
 }
 
-// IPConn is the implementation of the Conn and PacketConn interfaces
+// IPConn is the implementation of the [Conn] and [PacketConn] interfaces
 // for IP network connections.
 type IPConn struct {
 	conn
 }
 
 // SyscallConn returns a raw network connection.
-// This implements the syscall.Conn interface.
+// This implements the [syscall.Conn] interface.
 func (c *IPConn) SyscallConn() (syscall.RawConn, error) {
 	return nil, errors.New("SyscallConn not implemented")
 }
@@ -114,7 +125,7 @@ func (c *IPConn) WriteToIP(b []byte, addr *IPAddr) (int, error) {
 	return 0, errors.New("WriteToIP not implemented")
 }
 
-// WriteTo implements the PacketConn WriteTo method.
+// WriteTo implements the [PacketConn] WriteTo method.
 func (c *IPConn) WriteTo(b []byte, addr Addr) (int, error) {
 	return 0, errors.New("WriteTo not implemented")
 }

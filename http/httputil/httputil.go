@@ -1,6 +1,4 @@
-// TINYGO: The following is copied from Go 1.21.5 official implementation.
-
-// Copyright 2014 The Go Authors. All rights reserved.
+// TINYGO: The following is copied from Go 1.26.2 official implementation.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -15,7 +13,7 @@ import (
 
 // NewChunkedReader returns a new chunkedReader that translates the data read from r
 // out of HTTP "chunked" format before returning it.
-// The chunkedReader returns io.EOF when the final 0-length chunk is read.
+// The chunkedReader returns [io.EOF] when the final 0-length chunk is read.
 //
 // NewChunkedReader is not needed by normal applications. The http package
 // automatically decodes chunking when reading response bodies.

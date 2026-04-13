@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // Copyright 2011 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -30,7 +30,7 @@ var (
 type Interface struct {
 	Index        int          // positive integer that starts at one, zero is never used
 	MTU          int          // maximum transmission unit
-	Name         string       // e.g., "en0", "lo0", "eth0.100"
+	Name         string       // e.g., "en0", "lo0", "eth0.100"; may be the empty string
 	HardwareAddr HardwareAddr // IEEE MAC-48, EUI-48 and EUI-64 form
 	Flags        Flags        // e.g., FlagUp, FlagLoopback, FlagMulticast
 }
@@ -80,7 +80,7 @@ func Interfaces() ([]Interface, error) {
 // addresses.
 //
 // The returned list does not identify the associated interface; use
-// Interfaces and Interface.Addrs for more detail.
+// Interfaces and [Interface.Addrs] for more detail.
 func InterfaceAddrs() ([]Addr, error) {
 	return nil, errors.New("InterfaceAddrs not implemented")
 }
@@ -89,7 +89,7 @@ func InterfaceAddrs() ([]Addr, error) {
 //
 // On Solaris, it returns one of the logical network interfaces
 // sharing the logical data link; for more precision use
-// InterfaceByName.
+// [InterfaceByName].
 func InterfaceByIndex(index int) (*Interface, error) {
 	return nil, errors.New("InterfaceByIndex not implemented")
 }

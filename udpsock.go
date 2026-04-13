@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -9,7 +9,6 @@ package net
 import (
 	"errors"
 	"fmt"
-	"internal/itoa"
 	"io"
 	"net/netip"
 	"strconv"
@@ -24,7 +23,7 @@ type UDPAddr struct {
 	Zone string // IPv6 scoped addressing zone
 }
 
-// AddrPort returns the UDPAddr a as a netip.AddrPort.
+// AddrPort returns the [UDPAddr] a as a [netip.AddrPort].
 //
 // If a.Port does not fit in a uint16, it's silently truncated.
 //
@@ -47,9 +46,9 @@ func (a *UDPAddr) String() string {
 	}
 	ip := ipEmptyString(a.IP)
 	if a.Zone != "" {
-		return JoinHostPort(ip+"%"+a.Zone, itoa.Itoa(a.Port))
+		return JoinHostPort(ip+"%"+a.Zone, strconv.Itoa(a.Port))
 	}
-	return JoinHostPort(ip, itoa.Itoa(a.Port))
+	return JoinHostPort(ip, strconv.Itoa(a.Port))
 }
 
 func (a *UDPAddr) isWildcard() bool {
@@ -79,7 +78,7 @@ func (a *UDPAddr) opAddr() Addr {
 // recommended, because it will return at most one of the host name's
 // IP addresses.
 //
-// See func Dial for a description of the network and address
+// See func [Dial] for a description of the network and address
 // parameters.
 func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 
@@ -260,7 +259,7 @@ func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
 // data is copied from oob. It returns the number of payload and
 // out-of-band bytes written.
 //
-// The packages golang.org/x/net/ipv4 and golang.org/x/net/ipv6 can be
+// The packages [golang.org/x/net/ipv4] and [golang.org/x/net/ipv6] can be
 // used to manipulate IP-level socket options in oob.
 func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err error) {
 	return 0, 0, errors.New("WriteMsgUDP not implemented")

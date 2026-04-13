@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.4 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // TINYGO: Omit DualStack support
 // TINYGO: Omit Fast Fallback support
@@ -30,11 +30,14 @@ const (
 // mptcpStatus is a tristate for Multipath TCP, see go.dev/issue/56539
 type mptcpStatus uint8
 
+// TINYGO: mptcpStatusListen stub for ListenConfig compatibility
+type mptcpStatusListen uint8
+
 // A Dialer contains options for connecting to an address.
 //
 // The zero value for each field is equivalent to dialing
 // without that option. Dialing with the zero value of Dialer
-// is therefore equivalent to just calling the Dial function.
+// is therefore equivalent to just calling the [Dial] function.
 //
 // It is safe to call Dialer's methods concurrently.
 type Dialer struct {
@@ -66,12 +69,24 @@ type Dialer struct {
 
 	// KeepAlive specifies the interval between keep-alive
 	// probes for an active network connection.
+	//
+	// KeepAlive is ignored if KeepAliveConfig.Enable is true.
+	//
 	// If zero, keep-alive probes are sent with a default value
 	// (currently 15 seconds), if supported by the protocol and operating
 	// system. Network protocols or operating systems that do
-	// not support keep-alives ignore this field.
+	// not support keep-alive ignore this field.
 	// If negative, keep-alive probes are disabled.
 	KeepAlive time.Duration
+
+	// KeepAliveConfig specifies the keep-alive probe configuration
+	// for an active network connection, when supported by the
+	// protocol and operating system.
+	//
+	// If KeepAliveConfig.Enable is true, keep-alive probes are enabled.
+	// If KeepAliveConfig.Enable is false and KeepAlive is negative,
+	// keep-alive probes are disabled.
+	KeepAliveConfig KeepAliveConfig
 }
 
 // Dial connects to the address on the named network.
@@ -86,7 +101,7 @@ func Dial(network, address string) (Conn, error) {
 	return d.Dial(network, address)
 }
 
-// DialTimeout acts like Dial but takes a timeout.
+// DialTimeout acts like [Dial] but takes a timeout.
 //
 // The timeout includes name resolution, if required.
 // When using TCP, and the host in the address parameter resolves to
@@ -106,8 +121,8 @@ func DialTimeout(network, address string, timeout time.Duration) (Conn, error) {
 // See func Dial for a description of the network and address
 // parameters.
 //
-// Dial uses context.Background internally; to specify the context, use
-// DialContext.
+// Dial uses [context.Background] internally; to specify the context, use
+// [Dialer.DialContext].
 func (d *Dialer) Dial(network, address string) (Conn, error) {
 	return d.DialContext(context.Background(), network, address)
 }
@@ -128,7 +143,7 @@ func (d *Dialer) Dial(network, address string) (Conn, error) {
 // the connect to each single address will be given 15 seconds to complete
 // before trying the next one.
 //
-// See func Dial for a description of the network and address
+// See func [Dial] for a description of the network and address
 // parameters.
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn, error) {
 
@@ -157,29 +172,46 @@ type ListenConfig struct {
 	// If Control is not nil, it is called after creating the network
 	// connection but before binding it to the operating system.
 	//
-	// Network and address parameters passed to Control method are not
-	// necessarily the ones passed to Listen. For example, passing "tcp" to
-	// Listen will cause the Control function to be called with "tcp4" or "tcp6".
+	// Network and address parameters passed to Control function are not
+	// necessarily the ones passed to Listen. Calling Listen with TCP networks
+	// will cause the Control function to be called with "tcp4" or "tcp6",
+	// UDP networks become "udp4" or "udp6", IP networks become "ip4" or "ip6",
+	// and other known networks are passed as-is.
 	Control func(network, address string, c syscall.RawConn) error
 
 	// KeepAlive specifies the keep-alive period for network
 	// connections accepted by this listener.
-	// If zero, keep-alives are enabled if supported by the protocol
+	//
+	// KeepAlive is ignored if KeepAliveConfig.Enable is true.
+	//
+	// If zero, keep-alive are enabled if supported by the protocol
 	// and operating system. Network protocols or operating systems
-	// that do not support keep-alives ignore this field.
-	// If negative, keep-alives are disabled.
+	// that do not support keep-alive ignore this field.
+	// If negative, keep-alive are disabled.
 	KeepAlive time.Duration
+
+	// KeepAliveConfig specifies the keep-alive probe configuration
+	// for an active network connection, when supported by the
+	// protocol and operating system.
+	//
+	// If KeepAliveConfig.Enable is true, keep-alive probes are enabled.
+	// If KeepAliveConfig.Enable is false and KeepAlive is negative,
+	// keep-alive probes are disabled.
+	KeepAliveConfig KeepAliveConfig
 
 	// If mptcpStatus is set to a value allowing Multipath TCP (MPTCP) to be
 	// used, any call to Listen with "tcp(4|6)" as network will use MPTCP if
 	// supported by the operating system.
-	mptcpStatus mptcpStatus
+	mptcpStatus mptcpStatusListen
 }
 
 // Listen announces on the local network address.
 //
 // See func Listen for a description of the network and address
 // parameters.
+//
+// The ctx argument is used while resolving the address on which to listen;
+// it does not affect the returned Listener.
 func (lc *ListenConfig) Listen(ctx context.Context, network, address string) (Listener, error) {
 	return nil, errors.New("dial:ListenConfig:Listen not implemented")
 }
@@ -188,6 +220,9 @@ func (lc *ListenConfig) Listen(ctx context.Context, network, address string) (Li
 //
 // See func ListenPacket for a description of the network and address
 // parameters.
+//
+// The ctx argument is used while resolving the address on which to listen;
+// it does not affect the returned PacketConn.
 func (lc *ListenConfig) ListenPacket(ctx context.Context, network, address string) (PacketConn, error) {
 	return nil, errors.New("dial:ListenConfig:ListenPacket not implemented")
 }

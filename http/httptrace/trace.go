@@ -1,4 +1,4 @@
-// TINYGO: The following is copied and modified from Go 1.21.5 official implementation.
+// TINYGO: The following is copied and modified from Go 1.26.2 official implementation.
 
 // Copyright 2016 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -54,7 +54,7 @@ func WithClientTrace(ctx context.Context, trace *ClientTrace) context.Context {
 // during a single round trip and has no hooks that span a series
 // of redirected requests.
 //
-// See https://blog.golang.org/http-tracing for more.
+// See https://go.dev/blog/http-tracing for more.
 type ClientTrace struct {
 	// GetConn is called before a connection is created or
 	// retrieved from an idle pool. The hostPort is the
