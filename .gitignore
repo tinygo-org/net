@@ -19,3 +19,7 @@
 
 # Go workspace file
 go.work
+
+# Upgrade script work/report directories
+.upgrade-work/
+.upgrade-report/
