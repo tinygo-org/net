@@ -1,6 +1,4 @@
-// TINYGO: The following is copied from Go 1.21.4 official implementation.
-
-// Copyright 2021 The Go Authors. All rights reserved.
+// TINYGO: The following is copied from Go 1.26.2 official implementation.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -11,7 +9,7 @@ import (
 	"unicode"
 )
 
-// EqualFold is strings.EqualFold, ASCII only. It reports whether s and t
+// EqualFold is [strings.EqualFold], ASCII only. It reports whether s and t
 // are equal, ASCII-case-insensitively.
 func EqualFold(s, t string) bool {
 	if len(s) != len(t) {

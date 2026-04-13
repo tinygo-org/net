@@ -1,6 +1,4 @@
-// TINYGO: The following is copied from Go 1.21.4 official implementation.
-
-// Copyright 2009 The Go Authors. All rights reserved.
+// TINYGO: The following is copied from Go 1.26.2 official implementation.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -64,6 +62,14 @@ func (f *file) readLine() (s string, ok bool) {
 	}
 	s, ok = f.getLineFromData()
 	return
+}
+
+func (f *file) stat() (mtime time.Time, size int64, err error) {
+	st, err := f.file.Stat()
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	return st.ModTime(), st.Size(), nil
 }
 
 func open(name string) (*file, error) {
@@ -174,42 +180,6 @@ func xtoi2(s string, e byte) (byte, bool) {
 	return byte(n), ok && ei == 2
 }
 
-// Convert i to a hexadecimal string. Leading zeros are not printed.
-func appendHex(dst []byte, i uint32) []byte {
-	if i == 0 {
-		return append(dst, '0')
-	}
-	for j := 7; j >= 0; j-- {
-		v := i >> uint(j*4)
-		if v > 0 {
-			dst = append(dst, hexDigit[v&0xf])
-		}
-	}
-	return dst
-}
-
-// Number of occurrences of b in s.
-func count(s string, b byte) int {
-	n := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			n++
-		}
-	}
-	return n
-}
-
-// Index of rightmost occurrence of b in s.
-func last(s string, b byte) int {
-	i := len(s)
-	for i--; i >= 0; i-- {
-		if s[i] == b {
-			break
-		}
-	}
-	return i
-}
-
 // hasUpperCase tells whether the given string contains at least one upper-case.
 func hasUpperCase(s string) bool {
 	for i := range s {
@@ -281,21 +251,10 @@ func foreachField(x string, fn func(field string) error) error {
 	return nil
 }
 
-// stringsHasSuffix is strings.HasSuffix. It reports whether s ends in
-// suffix.
-func stringsHasSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
-}
-
 // stringsHasSuffixFold reports whether s ends in suffix,
 // ASCII-case-insensitively.
 func stringsHasSuffixFold(s, suffix string) bool {
 	return len(s) >= len(suffix) && stringsEqualFold(s[len(s)-len(suffix):], suffix)
-}
-
-// stringsHasPrefix is strings.HasPrefix. It reports whether s begins with prefix.
-func stringsHasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // stringsEqualFold is strings.EqualFold, ASCII only. It reports whether s and t
@@ -310,18 +269,4 @@ func stringsEqualFold(s, t string) bool {
 		}
 	}
 	return true
-}
-
-func readFull(r io.Reader) (all []byte, err error) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := r.Read(buf)
-		all = append(all, buf[:n]...)
-		if err == io.EOF {
-			return all, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
 }
