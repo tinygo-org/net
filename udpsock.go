@@ -113,6 +113,17 @@ func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 	return &UDPAddr{IP: ip.AsSlice(), Port: port}, nil
 }
 
+// UDPAddrFromAddrPort returns addr as a [UDPAddr]. If addr.IsValid() is false,
+// then the returned UDPAddr will contain a nil IP field, indicating an
+// address family-agnostic unspecified address.
+func UDPAddrFromAddrPort(addr netip.AddrPort) *UDPAddr {
+	return &UDPAddr{
+		IP:   addr.Addr().AsSlice(),
+		Zone: addr.Addr().Zone(),
+		Port: int(addr.Port()),
+	}
+}
+
 // UDPConn is the implementation of the Conn and PacketConn interfaces
 // for UDP network connections.
 type UDPConn struct {
