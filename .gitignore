@@ -23,3 +23,5 @@ go.work
 # Upgrade script work/report directories
 .upgrade-work/
 .upgrade-report/
+
+./tools/upgrade/upgrade
