@@ -281,3 +281,17 @@ func Listen(network, address string) (Listener, error) {
 
 	return listenTCP(laddr)
 }
+
+func ListenUDP(network string, laddr *UDPAddr) (*UDPConn, error) {
+	switch network {
+	case "udp", "udp4":
+	default:
+		return nil, fmt.Errorf("Network %s not supported", network)
+	}
+
+	if laddr == nil {
+		laddr = &UDPAddr{}
+	}
+
+	return listenUDP(laddr)
+}

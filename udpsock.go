@@ -242,9 +242,43 @@ func (c *UDPConn) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// ReadFromUDP acts like [UDPConn.ReadFrom] but returns a UDPAddr.
+func (c *UDPConn) ReadFromUDP(b []byte) (n int, addr *UDPAddr, err error) {
+	// This function is designed to allow the caller to control the lifetime
+	// of the returned *UDPAddr and thereby prevent an allocation.
+	// See https://blog.filippo.io/efficient-go-apis-with-the-inliner/.
+	// The real work is done by readFromUDP, below.
+	return c.readFromUDP(b, &UDPAddr{})
+}
+
+// readFromUDP implements ReadFromUDP.
+func (c *UDPConn) readFromUDP(b []byte, addr *UDPAddr) (int, *UDPAddr, error) {
+	n, addr, err := c.readFrom(b, addr)
+	if err != nil {
+		err = &OpError{Op: "read", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
+	}
+	return n, addr, err
+}
+
 // ReadFrom implements the PacketConn ReadFrom method.
 func (c *UDPConn) ReadFrom(b []byte) (int, Addr, error) {
-	return 0, nil, errors.New("ReadFrom not implemented")
+	n, addr, err := c.readFromUDP(b, &UDPAddr{})
+	if addr == nil {
+		// Return Addr(nil), not Addr(*UDPConn(nil)).
+		return n, nil, err
+	}
+	return n, addr, err
+}
+
+func (c *UDPConn) readFrom(b []byte, addr *UDPAddr) (int, *UDPAddr, error) {
+	n, raddr, err := netdev.RecvFrom(c.fd, b, 0, c.readDeadline)
+	if n < 0 {
+		n = 0
+	}
+	if err != nil && err != io.EOF {
+		err = &OpError{Op: "read", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
+	}
+	return n, UDPAddrFromAddrPort(raddr), err
 }
 
 // ReadMsgUDP reads a message from c, copying the payload into b and
@@ -259,9 +293,50 @@ func (c *UDPConn) ReadMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, 
 	return
 }
 
-// WriteTo implements the PacketConn WriteTo method.
+// WriteToUDP acts like [UDPConn.WriteTo] but takes a [UDPAddr].
+func (c *UDPConn) WriteToUDP(b []byte, addr *UDPAddr) (int, error) {
+	n, err := c.writeTo(b, addr)
+	if err != nil {
+		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: addr.opAddr(), Err: err}
+	}
+	return n, err
+}
+
+// WriteToUDPAddrPort acts like [UDPConn.WriteTo] but takes a [netip.AddrPort].
+func (c *UDPConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
+	n, err := c.writeToAddrPort(b, addr)
+	if err != nil {
+		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: UDPAddrFromAddrPort(addr), Err: err}
+	}
+	return n, err
+}
+
+// WriteTo implements the [PacketConn] WriteTo method.
 func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
-	return 0, errors.New("WriteTo not implemented")
+	a, ok := addr.(*UDPAddr)
+	if !ok {
+		return 0, &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: addr, Err: syscall.EINVAL}
+	}
+	n, err := c.writeTo(b, a)
+	if err != nil {
+		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: a.opAddr(), Err: err}
+	}
+	return n, err
+}
+
+func (c *UDPConn) writeTo(b []byte, addr *UDPAddr) (int, error) {
+	return c.writeToAddrPort(b, addr.AddrPort())
+}
+
+func (c *UDPConn) writeToAddrPort(b []byte, addr netip.AddrPort) (int, error) {
+	n, err := netdev.SendTo(c.fd, b, 0, c.writeDeadline, addr)
+	if n < 0 {
+		n = 0
+	}
+	if err != nil {
+		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: UDPAddrFromAddrPort(addr), Err: err}
+	}
+	return n, err
 }
 
 // WriteMsgUDP writes a message to addr via c if c isn't connected, or
@@ -274,6 +349,11 @@ func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
 // used to manipulate IP-level socket options in oob.
 func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err error) {
 	return 0, 0, errors.New("WriteMsgUDP not implemented")
+}
+
+// WriteMsgUDPAddrPort is like [UDPConn.WriteMsgUDP] but takes a [netip.AddrPort] instead of a [UDPAddr].
+func (c *UDPConn) WriteMsgUDPAddrPort(b, oob []byte, addr netip.AddrPort) (n, oobn int, err error) {
+	return 0, 0, errors.New("WriteMsgUDPAddrPort not implemented")
 }
 
 func (c *UDPConn) Close() error {
@@ -302,4 +382,23 @@ func (c *UDPConn) SetReadDeadline(t time.Time) error {
 func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	c.writeDeadline = t
 	return nil
+}
+
+func listenUDP(laddr *UDPAddr) (*UDPConn, error) {
+	fd, err := netdev.Socket(_AF_INET, _SOCK_DGRAM, _IPPROTO_UDP)
+
+	if err != nil {
+		return nil, err
+	}
+
+	laddrport := laddr.AddrPort()
+	err = netdev.Bind(fd, laddrport)
+	if err != nil {
+		return nil, err
+	}
+
+	return &UDPConn{
+		fd:    fd,
+		laddr: laddr,
+	}, nil
 }

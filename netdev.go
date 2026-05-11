@@ -115,7 +115,9 @@ type netdever interface {
 	//  - MSG_WAITALL: This flag requests that the operation block until the full request is satisfied.
 
 	Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error)
+	SendTo(sockfd int, buf []byte, flags int, deadline time.Time, addr netip.AddrPort) (int, error)
 	Recv(sockfd int, buf []byte, flags int, deadline time.Time) (int, error)
+	RecvFrom(sockfd int, buf []byte, flags int, deadline time.Time) (int, netip.AddrPort, error)
 	Close(sockfd int) error
 
 	// SetSockOpt manipulates options for the socket
@@ -166,8 +168,14 @@ func (n *nopNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
 func (n *nopNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
 	return -1, ErrNetdevNotSet
 }
+func (n *nopNetdev) SendTo(sockfd int, buf []byte, flags int, deadline time.Time, addr netip.AddrPort) (int, error) {
+	return -1, ErrNetdevNotSet
+}
 func (n *nopNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
 	return -1, ErrNetdevNotSet
+}
+func (n *nopNetdev) RecvFrom(sockfd int, buf []byte, flags int, deadline time.Time) (int, netip.AddrPort, error) {
+	return -1, netip.AddrPort{}, ErrNetdevNotSet
 }
 func (n *nopNetdev) Close(sockfd int) error { return ErrNetdevNotSet }
 func (n *nopNetdev) SetSockOpt(sockfd int, level int, opt int, value interface{}) error {
