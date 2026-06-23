@@ -101,8 +101,11 @@ type Dialer struct {
 // See Go "net" package Dial() for more information.
 //
 // Note: Tinygo Dial supports a subset of networks supported by Go Dial,
-// specifically: "tcp", "tcp4", "udp", and "udp4".  IP and unix networks are
-// not supported.
+// specifically: "tcp", "tcp4", "tcp6", "udp", "udp4", and "udp6".  IP and unix
+// networks are not supported.  IPv6 addresses are supported, but when dialing a
+// host name the resolver prefers an IPv4 (A) address and only falls back to
+// IPv6 (AAAA), so the "4"/"6" suffix does not force the address family for name
+// resolution.
 func Dial(network, address string) (Conn, error) {
 	var d Dialer
 	return d.Dial(network, address)
@@ -157,13 +160,13 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 	// TINYGO: Ignoring context
 
 	switch network {
-	case "tcp", "tcp4":
+	case "tcp", "tcp4", "tcp6":
 		raddr, err := ResolveTCPAddr(network, address)
 		if err != nil {
 			return nil, err
 		}
 		return DialTCP(network, nil, raddr)
-	case "udp", "udp4":
+	case "udp", "udp4", "udp6":
 		raddr, err := ResolveUDPAddr(network, address)
 		if err != nil {
 			return nil, err
@@ -271,12 +274,12 @@ func parseNetwork(ctx context.Context, network string, needsProto bool) (afnet s
 // See Go "net" package Listen() for more information.
 //
 // Note: Tinygo Listen supports a subset of networks supported by Go Listen,
-// specifically: "tcp", "tcp4".  "tcp6" and unix networks are not supported.
+// specifically: "tcp", "tcp4", and "tcp6".  unix networks are not supported.
 func Listen(network, address string) (Listener, error) {
 
 	//	println("Listen", address)
 	switch network {
-	case "tcp", "tcp4":
+	case "tcp", "tcp4", "tcp6":
 	default:
 		return nil, fmt.Errorf("Network %s not supported", network)
 	}

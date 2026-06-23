@@ -94,7 +94,7 @@ func (a *TCPAddr) opAddr() Addr {
 func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 
 	switch network {
-	case "tcp", "tcp4":
+	case "tcp", "tcp4", "tcp6":
 	default:
 		return nil, fmt.Errorf("Network '%s' not supported", network)
 	}
@@ -161,7 +161,7 @@ type TCPConn struct {
 func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 
 	switch network {
-	case "tcp", "tcp4":
+	case "tcp", "tcp4", "tcp6":
 	default:
 		return nil, errors.New("Network not supported: '" + network + "'")
 	}
@@ -174,11 +174,11 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 
 	if raddr.IP.IsUnspecified() {
 		return nil, errors.New("Sorry, localhost isn't available on Tinygo")
-	} else if len(raddr.IP) != 4 {
-		return nil, errors.New("only ipv4 supported")
+	} else if len(raddr.IP) != 4 && len(raddr.IP) != 16 {
+		return nil, errors.New("invalid IP address")
 	}
 
-	fd, err := netdev.Socket(_AF_INET, _SOCK_STREAM, _IPPROTO_TCP)
+	fd, err := netdev.Socket(socketFamily(raddr.IP), _SOCK_STREAM, _IPPROTO_TCP)
 	if err != nil {
 		return nil, err
 	}
@@ -379,7 +379,7 @@ func (l *listener) Addr() Addr {
 }
 
 func listenTCP(laddr *TCPAddr) (Listener, error) {
-	fd, err := netdev.Socket(_AF_INET, _SOCK_STREAM, _IPPROTO_TCP)
+	fd, err := netdev.Socket(socketFamily(laddr.IP), _SOCK_STREAM, _IPPROTO_TCP)
 	if err != nil {
 		return nil, err
 	}

@@ -83,7 +83,7 @@ func (a *UDPAddr) opAddr() Addr {
 func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 
 	switch network {
-	case "udp", "udp4":
+	case "udp", "udp4", "udp6":
 	default:
 		return nil, fmt.Errorf("Network '%s' not supported", network)
 	}
@@ -156,7 +156,7 @@ func ephemeralPort() int {
 // local system is assumed.
 func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	switch network {
-	case "udp", "udp4":
+	case "udp", "udp4", "udp6":
 	default:
 		return nil, fmt.Errorf("Network '%s' not supported", network)
 	}
@@ -173,6 +173,8 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 
 	if raddr.IP.IsUnspecified() {
 		return nil, fmt.Errorf("Sorry, localhost isn't available on Tinygo")
+	} else if len(raddr.IP) != 4 && len(raddr.IP) != 16 {
+		return nil, fmt.Errorf("invalid IP address")
 	}
 
 	// If no port was given, grab an ephemeral port
@@ -180,7 +182,7 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 		laddr.Port = ephemeralPort()
 	}
 
-	fd, err := netdev.Socket(_AF_INET, _SOCK_DGRAM, _IPPROTO_UDP)
+	fd, err := netdev.Socket(socketFamily(raddr.IP), _SOCK_DGRAM, _IPPROTO_UDP)
 	if err != nil {
 		return nil, err
 	}
