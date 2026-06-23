@@ -138,8 +138,11 @@ func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
 		return -1, netip.AddrPort{}, err
 	}
 	var raddr netip.AddrPort
-	if sa4, ok := sa.(*syscall.SockaddrInet4); ok {
-		raddr = netip.AddrPortFrom(netip.AddrFrom4(sa4.Addr), uint16(sa4.Port))
+	switch s := sa.(type) {
+	case *syscall.SockaddrInet4:
+		raddr = netip.AddrPortFrom(netip.AddrFrom4(s.Addr), uint16(s.Port))
+	case *syscall.SockaddrInet6:
+		raddr = netip.AddrPortFrom(netip.AddrFrom16(s.Addr), uint16(s.Port))
 	}
 	return nfd, raddr, nil
 }
@@ -243,17 +246,21 @@ func toInt(value interface{}) int {
 	}
 }
 
-// sockaddr builds a SockaddrInet4 from an AddrPort, mapping an invalid/zero
-// address to 0.0.0.0 (the wildcard used when binding).
-func sockaddr(ip netip.AddrPort) *syscall.SockaddrInet4 {
+// sockaddr builds a syscall.Sockaddr from an AddrPort: a SockaddrInet6 for an
+// IPv6 address, otherwise a SockaddrInet4 (an invalid/zero address maps to the
+// 0.0.0.0 wildcard used when binding).
+func sockaddr(ip netip.AddrPort) syscall.Sockaddr {
 	return sockaddrFromParts(ip.Addr(), ip.Port())
 }
 
-func sockaddrFromParts(addr netip.Addr, port uint16) *syscall.SockaddrInet4 {
+func sockaddrFromParts(addr netip.Addr, port uint16) syscall.Sockaddr {
+	// As4/As16 panic on a wrongly-sized address, so dispatch on the family.
+	if addr = addr.Unmap(); addr.Is6() {
+		// Link-local zones (%zone) are not resolved to a scope id.
+		return &syscall.SockaddrInet6{Port: int(port), Addr: addr.As16()}
+	}
 	sa := &syscall.SockaddrInet4{Port: int(port)}
-	// As4 panics on a non-4-byte address; only an IPv4 address is valid here.
-	// A zero/unspecified address leaves Addr as 0.0.0.0 (the bind wildcard).
-	if addr = addr.Unmap(); addr.Is4() {
+	if addr.Is4() {
 		sa.Addr = addr.As4()
 	}
 	return sa
@@ -289,11 +296,7 @@ func hostLookup(name string) (netip.Addr, error) {
 
 	// IP literal?
 	if addr, err := netip.ParseAddr(name); err == nil {
-		addr = addr.Unmap()
-		if !addr.Is4() {
-			return netip.Addr{}, &DNSError{Err: "only IPv4 is supported", Name: name}
-		}
-		return addr, nil
+		return addr.Unmap(), nil
 	}
 
 	// /etc/hosts
@@ -309,12 +312,15 @@ func hostLookup(name string) (netip.Addr, error) {
 	return dnsLookup(name)
 }
 
-// lookupStaticHost scans /etc/hosts for an IPv4 address matching name.
+// lookupStaticHost scans /etc/hosts for an address matching name, preferring an
+// IPv4 match but falling back to IPv6.
 func lookupStaticHost(name string) (netip.Addr, bool) {
 	data, err := os.ReadFile("/etc/hosts")
 	if err != nil {
 		return netip.Addr{}, false
 	}
+	var v6 netip.Addr
+	var haveV6 bool
 	for _, line := range strings.Split(string(data), "\n") {
 		if i := strings.IndexByte(line, '#'); i >= 0 {
 			line = line[:i]
@@ -324,16 +330,22 @@ func lookupStaticHost(name string) (netip.Addr, bool) {
 			continue
 		}
 		addr, err := netip.ParseAddr(fields[0])
-		if err != nil || !addr.Unmap().Is4() {
+		if err != nil {
 			continue
 		}
+		addr = addr.Unmap()
 		for _, h := range fields[1:] {
 			if strings.EqualFold(h, name) {
-				return addr.Unmap(), true
+				if addr.Is4() {
+					return addr, true
+				}
+				if !haveV6 {
+					v6, haveV6 = addr, true
+				}
 			}
 		}
 	}
-	return netip.Addr{}, false
+	return v6, haveV6
 }
 
 // resolvConfServers returns the nameservers from /etc/resolv.conf as
@@ -359,13 +371,29 @@ func resolvConfServers() []string {
 	return servers
 }
 
-// dnsLookup resolves name to an IPv4 address by querying the system
-// nameservers over UDP.
+const (
+	dnsTypeA    = 1
+	dnsTypeAAAA = 28
+)
+
+// dnsLookup resolves name by querying the system nameservers over UDP,
+// preferring an IPv4 (A) answer and falling back to IPv6 (AAAA).
 func dnsLookup(name string) (netip.Addr, error) {
-	id, query := buildDNSQuery(name)
+	if addr, err := dnsLookupType(name, dnsTypeA); err == nil {
+		return addr, nil
+	}
+	if addr, err := dnsLookupType(name, dnsTypeAAAA); err == nil {
+		return addr, nil
+	}
+	return netip.Addr{}, &DNSError{Err: "no address found", Name: name}
+}
+
+// dnsLookupType resolves name for a single DNS record type (A or AAAA).
+func dnsLookupType(name string, qtype uint16) (netip.Addr, error) {
+	id, query := buildDNSQuery(name, qtype)
 	var lastErr error
 	for _, server := range resolvConfServers() {
-		addr, err := dnsQuery(server, query, id)
+		addr, err := dnsQuery(server, query, id, qtype)
 		if err == nil {
 			return addr, nil
 		}
@@ -374,7 +402,7 @@ func dnsLookup(name string) (netip.Addr, error) {
 	if lastErr == nil {
 		lastErr = &DNSError{Err: "no answer", Name: name}
 	}
-	return netip.Addr{}, &DNSError{Err: lastErr.Error(), Name: name}
+	return netip.Addr{}, lastErr
 }
 
 // dnsID derives a non-secret 16-bit query ID. It need not be cryptographically
@@ -383,9 +411,10 @@ func dnsID() uint16 {
 	return uint16(time.Now().UnixNano())
 }
 
-// buildDNSQuery builds a standard recursive A-record query for name and returns
-// it together with the query ID, so the reply can be matched against it.
-func buildDNSQuery(name string) (uint16, []byte) {
+// buildDNSQuery builds a standard recursive query for name of the given record
+// type and returns it together with the query ID, so the reply can be matched
+// against it.
+func buildDNSQuery(name string, qtype uint16) (uint16, []byte) {
 	id := dnsID()
 	msg := []byte{
 		byte(id >> 8), byte(id), // ID
@@ -404,15 +433,15 @@ func buildDNSQuery(name string) (uint16, []byte) {
 	}
 	msg = append(msg, 0x00) // root label
 	msg = append(msg,
-		0x00, 0x01, // QTYPE = A
+		byte(qtype>>8), byte(qtype), // QTYPE
 		0x00, 0x01, // QCLASS = IN
 	)
 	return id, msg
 }
 
 // dnsQuery sends query to server (an IPv4 string) on port 53 and returns the
-// first A record from the response that matches id.
-func dnsQuery(server string, query []byte, id uint16) (netip.Addr, error) {
+// first record of type qtype from the response that matches id.
+func dnsQuery(server string, query []byte, id uint16, qtype uint16) (netip.Addr, error) {
 	srv, err := netip.ParseAddr(server)
 	if err != nil {
 		return netip.Addr{}, err
@@ -441,12 +470,12 @@ func dnsQuery(server string, query []byte, id uint16) (netip.Addr, error) {
 	if err != nil {
 		return netip.Addr{}, err
 	}
-	return parseDNSResponse(resp[:n], id)
+	return parseDNSResponse(resp[:n], id, qtype)
 }
 
-// parseDNSResponse extracts the first A record from a DNS response message,
-// after validating that it is a non-error reply to query id.
-func parseDNSResponse(msg []byte, id uint16) (netip.Addr, error) {
+// parseDNSResponse extracts the first record of type qtype from a DNS response
+// message, after validating that it is a non-error reply to query id.
+func parseDNSResponse(msg []byte, id uint16, qtype uint16) (netip.Addr, error) {
 	if len(msg) < 12 {
 		return netip.Addr{}, &DNSError{Err: "short DNS response"}
 	}
@@ -488,14 +517,21 @@ func parseDNSResponse(msg []byte, id uint16) (netip.Addr, error) {
 		if off+rdlength > len(msg) {
 			return netip.Addr{}, &DNSError{Err: "malformed DNS rdata"}
 		}
-		if rrtype == 1 && rdlength == 4 { // A record
-			return netip.AddrFrom4([4]byte{
-				msg[off], msg[off+1], msg[off+2], msg[off+3],
-			}), nil
+		if rrtype == int(qtype) {
+			if qtype == dnsTypeA && rdlength == 4 {
+				var b [4]byte
+				copy(b[:], msg[off:off+4])
+				return netip.AddrFrom4(b), nil
+			}
+			if qtype == dnsTypeAAAA && rdlength == 16 {
+				var b [16]byte
+				copy(b[:], msg[off:off+16])
+				return netip.AddrFrom16(b), nil
+			}
 		}
 		off += rdlength
 	}
-	return netip.Addr{}, &DNSError{Err: "no A record in DNS response", IsNotFound: true}
+	return netip.Addr{}, &DNSError{Err: "no matching record in DNS response", IsNotFound: true}
 }
 
 // skipName advances past a (possibly compressed) DNS name and returns the

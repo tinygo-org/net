@@ -10,6 +10,7 @@ import (
 
 const (
 	_AF_INET       = 0x2
+	_AF_INET6      = 0xa
 	_SOCK_STREAM   = 0x1
 	_SOCK_DGRAM    = 0x2
 	_SOL_SOCKET    = 0x1
@@ -34,6 +35,16 @@ var netdev netdever = &nopNetdev{}
 // (useNetdev is go:linkname'd from tinygo/drivers package)
 func useNetdev(dev netdever) {
 	netdev = dev
+}
+
+// socketFamily returns the address family (_AF_INET or _AF_INET6) to use for a
+// socket targeting ip. A nil/zero-length IP (e.g. a wildcard listen address)
+// defaults to IPv4.
+func socketFamily(ip IP) int {
+	if len(ip) == 16 && ip.To4() == nil {
+		return _AF_INET6
+	}
+	return _AF_INET
 }
 
 // netdever is TinyGo's OSI L3/L4 network/transport layer interface.  Network
