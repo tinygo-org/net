@@ -87,6 +87,13 @@ type Dialer struct {
 	// If KeepAliveConfig.Enable is false and KeepAlive is negative,
 	// keep-alive probes are disabled.
 	KeepAliveConfig KeepAliveConfig
+
+	// Resolver optionally specifies an alternate resolver to use.
+	//
+	// TINYGO: present for API compatibility; DialContext resolves via the
+	// netdev-backed ResolveTCPAddr/ResolveUDPAddr and does not consult this
+	// field.
+	Resolver *Resolver
 }
 
 // Dial connects to the address on the named network.
@@ -280,4 +287,23 @@ func Listen(network, address string) (Listener, error) {
 	}
 
 	return listenTCP(laddr)
+}
+
+// ListenPacket announces on the local network address.
+//
+// TINYGO: only UDP networks are supported, backed by ListenUDP; the
+// returned PacketConn is a *UDPConn.
+func ListenPacket(network, address string) (PacketConn, error) {
+	switch network {
+	case "udp", "udp4":
+	default:
+		return nil, fmt.Errorf("Network %s not supported", network)
+	}
+
+	laddr, err := ResolveUDPAddr(network, address)
+	if err != nil {
+		return nil, err
+	}
+
+	return ListenUDP(network, laddr)
 }

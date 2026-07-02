@@ -296,6 +296,61 @@ func (c *TCPConn) CloseWrite() error {
 	return fmt.Errorf("CloseWrite not implemented")
 }
 
+// CloseRead shuts down the reading side of the TCP connection.
+// Most callers should just use Close.
+//
+// TINYGO: no-op; netdev has no half-close, reads simply stop when Close
+// is called.
+func (c *TCPConn) CloseRead() error {
+	return nil
+}
+
+// SetNoDelay controls whether the operating system should delay
+// packet transmission in hopes of sending fewer packets (Nagle's
+// algorithm). The default is true (no delay), meaning that data is
+// sent as soon as possible after a Write.
+//
+// TINYGO: no-op; Nagle behavior is managed by the netdev driver.
+func (c *TCPConn) SetNoDelay(noDelay bool) error {
+	return nil
+}
+
+// SetReadBuffer sets the size of the operating system's receive buffer
+// associated with the connection.
+//
+// TINYGO: no-op; buffer sizing is managed by the netdev driver.
+func (c *TCPConn) SetReadBuffer(bytes int) error {
+	return nil
+}
+
+// SetWriteBuffer sets the size of the operating system's transmit buffer
+// associated with the connection.
+//
+// TINYGO: no-op; buffer sizing is managed by the netdev driver.
+func (c *TCPConn) SetWriteBuffer(bytes int) error {
+	return nil
+}
+
+// ReadFrom implements the io.ReaderFrom ReadFrom method.
+//
+// TINYGO: generic copy loop over Write; no zero-copy sendfile path.
+func (c *TCPConn) ReadFrom(r io.Reader) (int64, error) {
+	return genericReadFrom(c, r)
+}
+
+// genericReadFrom copies from r into w until EOF, returning the number
+// of bytes copied.
+func genericReadFrom(w io.Writer, r io.Reader) (int64, error) {
+	// Wrap w to hide its ReadFrom method, so io.Copy uses the generic
+	// read/write loop instead of recursing back into TCPConn.ReadFrom.
+	return io.Copy(onlyWriter{w}, r)
+}
+
+// onlyWriter hides w's ReadFrom method from io.Copy.
+type onlyWriter struct {
+	io.Writer
+}
+
 type listener struct {
 	fd    int
 	laddr *TCPAddr
@@ -347,4 +402,64 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 // use variables of type Listener instead of assuming TCP.
 type TCPListener struct {
 	listener
+}
+
+// ListenTCP acts like [Listen] for TCP networks.
+//
+// The network must be a TCP network name; see func [Dial] for details.
+// If the IP field of laddr is nil or an unspecified IP address,
+// ListenTCP listens on all available unicast and anycast IP addresses
+// of the local system. If the Port field of laddr is 0, a port number
+// is automatically chosen.
+func ListenTCP(network string, laddr *TCPAddr) (*TCPListener, error) {
+	switch network {
+	case "tcp", "tcp4":
+	default:
+		return nil, fmt.Errorf("Network '%s' not supported", network)
+	}
+
+	if laddr == nil {
+		laddr = &TCPAddr{}
+	}
+
+	fd, err := netdev.Socket(_AF_INET, _SOCK_STREAM, _IPPROTO_TCP)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = netdev.Bind(fd, laddr.AddrPort()); err != nil {
+		netdev.Close(fd)
+		return nil, err
+	}
+
+	if err = netdev.Listen(fd, 5); err != nil {
+		netdev.Close(fd)
+		return nil, err
+	}
+
+	return &TCPListener{listener{fd: fd, laddr: laddr}}, nil
+}
+
+// AcceptTCP accepts the next incoming call and returns the new
+// connection.
+func (l *TCPListener) AcceptTCP() (*TCPConn, error) {
+	fd, raddr, err := netdev.Accept(l.fd)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TCPConn{
+		fd:    fd,
+		net:   "tcp",
+		laddr: l.laddr,
+		raddr: TCPAddrFromAddrPort(raddr),
+	}, nil
+}
+
+// SetDeadline sets the deadline associated with the listener.
+// A zero time value disables the deadline.
+//
+// TINYGO: no-op; netdev.Accept has no deadline support.
+func (l *TCPListener) SetDeadline(t time.Time) error {
+	return nil
 }

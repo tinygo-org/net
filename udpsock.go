@@ -210,6 +210,53 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 	}, nil
 }
 
+// ListenUDP acts like [ListenPacket] for UDP networks.
+//
+// The network must be a UDP network name; see func [Dial] for details.
+//
+// If the IP field of laddr is nil or an unspecified IP address,
+// ListenUDP listens on all available IP addresses of the local system
+// except multicast IP addresses.
+// If the Port field of laddr is 0, a port number is automatically
+// chosen.
+func ListenUDP(network string, laddr *UDPAddr) (*UDPConn, error) {
+	switch network {
+	case "udp", "udp4":
+	default:
+		return nil, fmt.Errorf("Network '%s' not supported", network)
+	}
+
+	// TINYGO: Use netdev to create UDP socket and bind (no connect)
+
+	if laddr == nil {
+		laddr = &UDPAddr{}
+	}
+
+	// If no port was given, grab an ephemeral port
+	if laddr.Port == 0 {
+		laddr.Port = ephemeralPort()
+	}
+
+	fd, err := netdev.Socket(_AF_INET, _SOCK_DGRAM, _IPPROTO_UDP)
+	if err != nil {
+		return nil, err
+	}
+
+	lip, _ := netip.AddrFromSlice(laddr.IP)
+	laddrport := netip.AddrPortFrom(lip, uint16(laddr.Port))
+
+	if err = netdev.Bind(fd, laddrport); err != nil {
+		netdev.Close(fd)
+		return nil, err
+	}
+
+	return &UDPConn{
+		fd:    fd,
+		net:   network,
+		laddr: laddr,
+	}, nil
+}
+
 // SyscallConn returns a raw network connection.
 // This implements the syscall.Conn interface.
 func (c *UDPConn) SyscallConn() (syscall.RawConn, error) {
@@ -240,6 +287,66 @@ func (c *UDPConn) Write(b []byte) (int, error) {
 		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
 	}
 	return n, err
+}
+
+// ReadFromUDP acts like [UDPConn.ReadFrom] but returns a [UDPAddr].
+//
+// TINYGO: netdev has no per-datagram source address, so the connected
+// remote address (c.raddr) is returned as the source.
+func (c *UDPConn) ReadFromUDP(b []byte) (int, *UDPAddr, error) {
+	n, err := netdev.Recv(c.fd, b, 0, c.readDeadline)
+	if n < 0 {
+		n = 0
+	}
+	if err != nil && err != io.EOF {
+		err = &OpError{Op: "read", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
+	}
+	return n, c.raddr, err
+}
+
+// ReadFromUDPAddrPort acts like [UDPConn.ReadFromUDP] but returns a [netip.AddrPort].
+func (c *UDPConn) ReadFromUDPAddrPort(b []byte) (n int, addr netip.AddrPort, err error) {
+	n, uaddr, err := c.ReadFromUDP(b)
+	if uaddr != nil {
+		addr = uaddr.AddrPort()
+	}
+	return n, addr, err
+}
+
+// WriteToUDP acts like [UDPConn.WriteTo] but takes a [UDPAddr].
+//
+// TINYGO: the socket is connected via netdev, so writes go to the
+// connected remote regardless of addr, mirroring netdev.Send.
+func (c *UDPConn) WriteToUDP(b []byte, addr *UDPAddr) (int, error) {
+	n, err := netdev.Send(c.fd, b, 0, c.writeDeadline)
+	if n < 0 {
+		n = 0
+	}
+	if err != nil {
+		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: addr.opAddr(), Err: err}
+	}
+	return n, err
+}
+
+// WriteToUDPAddrPort acts like [UDPConn.WriteToUDP] but takes a [netip.AddrPort].
+func (c *UDPConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
+	return c.WriteToUDP(b, UDPAddrFromAddrPort(addr))
+}
+
+// SetReadBuffer sets the size of the operating system's receive buffer
+// associated with the connection.
+//
+// TINYGO: no-op; buffer sizing is managed by the netdev driver.
+func (c *UDPConn) SetReadBuffer(bytes int) error {
+	return nil
+}
+
+// SetWriteBuffer sets the size of the operating system's transmit buffer
+// associated with the connection.
+//
+// TINYGO: no-op; buffer sizing is managed by the netdev driver.
+func (c *UDPConn) SetWriteBuffer(bytes int) error {
+	return nil
 }
 
 // ReadFrom implements the PacketConn ReadFrom method.

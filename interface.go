@@ -35,6 +35,22 @@ type Interface struct {
 	Flags        Flags        // e.g., FlagUp, FlagLoopback, FlagMulticast
 }
 
+// Addrs returns a list of unicast interface addresses for a specific
+// interface.
+//
+// TINYGO: not implemented; netdev exposes no per-interface address list.
+func (ifi *Interface) Addrs() ([]Addr, error) {
+	return nil, errors.New("Interface.Addrs not implemented")
+}
+
+// MulticastAddrs returns a list of multicast, joined group addresses
+// for a specific interface.
+//
+// TINYGO: not implemented; netdev exposes no per-interface address list.
+func (ifi *Interface) MulticastAddrs() ([]Addr, error) {
+	return nil, errors.New("Interface.MulticastAddrs not implemented")
+}
+
 type Flags uint
 
 const (
