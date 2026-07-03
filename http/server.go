@@ -2779,6 +2779,23 @@ type Server struct {
 	// value.
 	ConnContext func(ctx context.Context, c net.Conn) context.Context
 
+	// TLSNextProto optionally specifies a function to take over
+	// ownership of the provided TLS connection when an ALPN
+	// protocol upgrade has occurred. The map key is the protocol
+	// name negotiated. The Handler argument should be used to
+	// handle HTTP requests and will initialize the Request's TLS
+	// and RemoteAddr if not already set. The connection is
+	// automatically closed when the function returns.
+	// If TLSNextProto is not nil, HTTP/2 support is not enabled
+	// automatically.
+	TLSNextProto map[string]func(*Server, *tls.Conn, Handler)
+
+	// HTTP2 configures HTTP/2 connections.
+	//
+	// This field does not yet have any effect.
+	// See https://go.dev/issue/67813.
+	HTTP2 *HTTP2Config
+
 	inShutdown atomicBool // true when server is in shutdown
 
 	disableKeepAlives int32     // accessed atomically.

@@ -124,5 +124,28 @@ func (r *Resolver) LookupPort(ctx context.Context, network, service string) (por
 	return 0, errors.New("net:LookupPort not implemented")
 }
 
+// An SRV represents a single DNS SRV record.
+type SRV struct {
+	Target   string
+	Port     uint16
+	Priority uint16
+	Weight   uint16
+}
+
+// LookupSRV tries to resolve an SRV query of the given service, protocol, and
+// domain name.
+//
+// TINYGO: not implemented; netdev provides no SRV record lookup.
+func (r *Resolver) LookupSRV(ctx context.Context, service, proto, name string) (string, []*SRV, error) {
+	return "", nil, errors.New("net:LookupSRV not implemented")
+}
+
+// LookupTXT returns the DNS TXT records for the given domain name.
+//
+// TINYGO: not implemented; netdev provides no TXT record lookup.
+func (r *Resolver) LookupTXT(ctx context.Context, name string) ([]string, error) {
+	return nil, errors.New("net:LookupTXT not implemented")
+}
+
 // errNoSuchHost is returned when the host lookup finds no matching records.
 var errNoSuchHost = errors.New("no such host")
