@@ -109,3 +109,8 @@ func InterfaceAddrs() ([]Addr, error) {
 func InterfaceByIndex(index int) (*Interface, error) {
 	return nil, errors.New("InterfaceByIndex not implemented")
 }
+
+// InterfaceByName returns the interface specified by name.
+func InterfaceByName(name string) (*Interface, error) {
+	return nil, errors.New("InterfaceByName not implemented")
+}

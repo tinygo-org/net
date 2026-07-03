@@ -6,6 +6,11 @@
 
 package net
 
+import (
+	"errors"
+	"time"
+)
+
 // BUG(mikio): On JS, WASIP1 and Plan 9, methods and functions related
 // to UnixConn and UnixListener are not implemented.
 
@@ -43,6 +48,33 @@ func (a *UnixAddr) opAddr() Addr {
 	}
 	return a
 }
+
+// UnixConn is an implementation of the Conn interface for connections to Unix
+// domain sockets.
+//
+// TINYGO: Unix sockets are not implemented (the browser has no filesystem
+// sockets). This type exists only to satisfy references and type assertions
+// such as those in github.com/gliderlabs/ssh agent forwarding; all methods
+// return an error. The corresponding code paths are never reached at runtime in
+// the wasm build.
+type UnixConn struct {
+	fd    int
+	laddr *UnixAddr
+	raddr *UnixAddr
+}
+
+var errUnixNotImplemented = errors.New("net: Unix sockets not implemented")
+
+func (c *UnixConn) Read(b []byte) (int, error)  { return 0, errUnixNotImplemented }
+func (c *UnixConn) Write(b []byte) (int, error) { return 0, errUnixNotImplemented }
+func (c *UnixConn) Close() error                { return errUnixNotImplemented }
+func (c *UnixConn) CloseRead() error            { return errUnixNotImplemented }
+func (c *UnixConn) CloseWrite() error           { return errUnixNotImplemented }
+func (c *UnixConn) LocalAddr() Addr             { return c.laddr }
+func (c *UnixConn) RemoteAddr() Addr            { return c.raddr }
+func (c *UnixConn) SetDeadline(t time.Time) error      { return errUnixNotImplemented }
+func (c *UnixConn) SetReadDeadline(t time.Time) error  { return errUnixNotImplemented }
+func (c *UnixConn) SetWriteDeadline(t time.Time) error { return errUnixNotImplemented }
 
 // ResolveUnixAddr returns an address of Unix domain socket end point.
 //

@@ -9,6 +9,7 @@
 package net
 
 import (
+	"context"
 	"internal/itoa"
 	"io"
 	"net/netip"
@@ -138,4 +139,11 @@ func (c *TLSConn) SetWriteDeadline(t time.Time) error {
 func (c *TLSConn) Handshake() error {
 	panic("TLSConn.Handshake() not implemented")
 	return nil
+}
+
+// HandshakeContext runs the client or server handshake protocol if it has not
+// yet been run. TINYGO: TLS is offloaded to the network device; this exists to
+// satisfy callers (e.g. pion/ice) that require the context-aware variant.
+func (c *TLSConn) HandshakeContext(ctx context.Context) error {
+	return c.Handshake()
 }
