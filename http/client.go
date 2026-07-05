@@ -13,6 +13,7 @@ package http
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -22,6 +23,8 @@ import (
 	"net/http/internal/ascii"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/http/httpguts"
@@ -141,6 +144,13 @@ type RoundTripper interface {
 	RoundTrip(*Request) (*Response, error)
 }
 
+func (c *Client) transport() RoundTripper {
+	if c.Transport != nil {
+		return c.Transport
+	}
+	return DefaultTransport
+}
+
 // didTimeout is non-nil only if err != nil.
 func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
 	cookieURL := req.URL
@@ -153,7 +163,7 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 			req.AddCookie(cookie)
 		}
 	}
-	resp, didTimeout, err = send(req, deadline)
+	resp, didTimeout, err = send(req, c.transport(), deadline)
 	if err != nil {
 		return nil, didTimeout, err
 	}
@@ -172,9 +182,39 @@ func (c *Client) deadline() time.Time {
 	return time.Time{}
 }
 
+// cancelTimerBody is an io.ReadCloser that wraps rc with two features:
+//  1. On Read error or close, the stop func is called.
+//  2. On Read failure, if reqDidTimeout is true, the error is wrapped and
+//     marked as net.Error that hit its timeout.
+type cancelTimerBody struct {
+	stop          func() // stops the time.Timer waiting to cancel the request
+	rc            io.ReadCloser
+	reqDidTimeout func() bool
+}
+
+func (b *cancelTimerBody) Read(p []byte) (n int, err error) {
+	n, err = b.rc.Read(p)
+	if err == nil {
+		return n, nil
+	}
+	if err == io.EOF {
+		return n, err
+	}
+	if b.reqDidTimeout() {
+		err = &timeoutError{err.Error() + " (Client.Timeout or context cancellation while reading body)"}
+	}
+	return n, err
+}
+
+func (b *cancelTimerBody) Close() error {
+	err := b.rc.Close()
+	b.stop()
+	return err
+}
+
 // send issues an HTTP request.
 // Caller should close resp.Body when done reading from it.
-func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
+func send(req *Request, rt RoundTripper, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
 
 	// TINYGO: Removed round tripper
 
@@ -203,8 +243,11 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 		req.Header.Set("Authorization", "Basic "+basicAuth(username, password))
 	}
 
-	resp, err = roundTrip(req)
+	stopTimer, didTimeout := setRequestCancel(req, rt, deadline)
+
+	resp, err = rt.RoundTrip(req)
 	if err != nil {
+		stopTimer()
 
 		// TINYGO: Remove TLS error check
 
@@ -215,8 +258,111 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 	}
 
 	// TINYGO: Skip check for resp.Body == nil since we'll set it in roundTrip
+	if !deadline.IsZero() {
+		resp.Body = &cancelTimerBody{
+			stop:          stopTimer,
+			rc:            resp.Body,
+			reqDidTimeout: didTimeout,
+		}
+	}
 
 	return resp, nil, nil
+}
+
+// setRequestCancel sets req.Cancel and adds a deadline context to req
+// if deadline is non-zero. The RoundTripper's type is used to
+// determine whether the legacy CancelRequest behavior should be used.
+//
+// As background, there are three ways to cancel a request:
+// First was Transport.CancelRequest. (deprecated) TINYGO: Removed this first option as we dont support Go 1.6
+// Second was Request.Cancel.
+// Third was Request.Context.
+// This function populates the second and third.
+func setRequestCancel(req *Request, rt RoundTripper, deadline time.Time) (stopTimer func(), didTimeout func() bool) {
+	if deadline.IsZero() {
+		return nop, alwaysFalse
+	}
+	knownTransport := knownRoundTripperImpl(rt, req)
+	oldCtx := req.Context()
+
+	if req.Cancel == nil && knownTransport {
+		// If they already had a Request.Context that's
+		// expiring sooner, do nothing:
+		if !timeBeforeContextDeadline(deadline, oldCtx) {
+			return nop, alwaysFalse
+		}
+
+		var cancelCtx func()
+		req.ctx, cancelCtx = context.WithDeadline(oldCtx, deadline)
+		return cancelCtx, func() bool { return time.Now().After(deadline) }
+	}
+	initialReqCancel := req.Cancel // the user's original Request.Cancel, if any
+
+	var cancelCtx func()
+	if timeBeforeContextDeadline(deadline, oldCtx) {
+		req.ctx, cancelCtx = context.WithDeadline(oldCtx, deadline)
+	}
+
+	cancel := make(chan struct{})
+	req.Cancel = cancel
+
+	doCancel := func() {
+		// The second way in the func comment above:
+		close(cancel)
+		// TINYGO: Removed logic using CancelRequest (implementation for <= Go 1.6)
+	}
+
+	stopTimerCh := make(chan struct{})
+	stopTimer = sync.OnceFunc(func() {
+		close(stopTimerCh)
+		if cancelCtx != nil {
+			cancelCtx()
+		}
+	})
+
+	timer := time.NewTimer(time.Until(deadline))
+	var timedOut atomic.Bool
+
+	go func() {
+		select {
+		case <-initialReqCancel:
+			doCancel()
+			timer.Stop()
+		case <-timer.C:
+			timedOut.Store(true)
+			doCancel()
+		case <-stopTimerCh:
+			timer.Stop()
+		}
+	}()
+
+	return stopTimer, timedOut.Load
+}
+
+// knownRoundTripperImpl reports whether rt is a RoundTripper that's
+// maintained by the Go team and known to implement the latest
+// optional semantics (notably contexts). The Request is used
+// to check whether this particular request is using an alternate protocol,
+// in which case we need to check the RoundTripper for that protocol.
+func knownRoundTripperImpl(rt RoundTripper, req *Request) bool {
+	switch rt.(type) {
+	case *Transport:
+		// TINYGO: Removed logic for http2 and alternate schemes
+		return true
+	}
+
+	return false
+}
+
+// timeBeforeContextDeadline reports whether the non-zero Time t is
+// before ctx's deadline, if any. If ctx does not have a deadline, it
+// always reports true (the deadline is considered infinite).
+func timeBeforeContextDeadline(t time.Time, ctx context.Context) bool {
+	d, ok := ctx.Deadline()
+	if !ok {
+		return true
+	}
+	return t.Before(d)
 }
 
 func roundTrip(req *Request) (*Response, error) {
@@ -271,6 +417,20 @@ func roundTrip(req *Request) (*Response, error) {
 	var conn net.Conn
 	var err error
 
+	ctx, cancel := context.WithCancelCause(req.Context())
+	defer func() {
+		if err != nil {
+			cancel(err)
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		req.closeBody()
+		return nil, context.Cause(ctx)
+	default:
+	}
+
 	host := req.Host
 	missingPort := !strings.Contains(host, ":")
 
@@ -290,8 +450,6 @@ func roundTrip(req *Request) (*Response, error) {
 		req.closeBody()
 		return nil, err
 	}
-
-	// TINYGO: TODO handle timeouts
 
 	writer := bufio.NewWriter(conn)
 	if err = req.Write(writer); err != nil {
