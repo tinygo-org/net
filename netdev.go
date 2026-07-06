@@ -10,6 +10,7 @@ import (
 
 const (
 	_AF_INET       = 0x2
+	_AF_INET6      = 0xA
 	_SOCK_STREAM   = 0x1
 	_SOCK_DGRAM    = 0x2
 	_SOL_SOCKET    = 0x1
