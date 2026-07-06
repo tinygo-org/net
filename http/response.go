@@ -14,6 +14,7 @@ package http
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -117,6 +118,11 @@ type Response struct {
 	// Request's Body is nil (having already been consumed).
 	// This is only populated for Client requests.
 	Request *Request
+
+	// TLS contains information about the TLS connection on which the response
+	// was received. It is nil for unencrypted responses. TINYGO: populated only
+	// if a caller sets it; the wasm fetch path leaves it nil.
+	TLS *tls.ConnectionState
 }
 
 // Cookies parses and returns the cookies set in the Set-Cookie headers.
