@@ -3260,6 +3260,57 @@ func ListenAndServe(addr string, handler Handler) error {
 	return server.ListenAndServe()
 }
 
+// ServeTLS accepts incoming HTTPS connections on the listener l, wrapping each
+// with a TLS server using the given certificate/key files (or the certificates
+// already configured in srv.TLSConfig), then serves requests on them.
+//
+// TINYGO: uses software crypto/tls (available on the host/native target); no
+// HTTP/2 negotiation is performed.
+func (srv *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
+	config := srv.TLSConfig
+	if config == nil {
+		config = &tls.Config{}
+	} else {
+		config = config.Clone()
+	}
+
+	configHasCert := len(config.Certificates) > 0 || config.GetCertificate != nil
+	if !configHasCert || certFile != "" || keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return err
+		}
+		config.Certificates = []tls.Certificate{cert}
+	}
+
+	tlsListener := tls.NewListener(l, config)
+	return srv.Serve(tlsListener)
+}
+
+// ListenAndServeTLS listens on srv.Addr and serves HTTPS requests, loading the
+// server certificate and key from certFile and keyFile.
+func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
+	if srv.shuttingDown() {
+		return ErrServerClosed
+	}
+	addr := srv.Addr
+	if addr == "" {
+		addr = ":https"
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
+	return srv.ServeTLS(ln, certFile, keyFile)
+}
+
+// ListenAndServeTLS is the HTTPS counterpart of ListenAndServe.
+func ListenAndServeTLS(addr, certFile, keyFile string, handler Handler) error {
+	server := &Server{Addr: addr, Handler: handler}
+	return server.ListenAndServeTLS(certFile, keyFile)
+}
+
 // onceCloseListener wraps a net.Listener, protecting it from
 // multiple Close calls.
 type onceCloseListener struct {
