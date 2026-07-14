@@ -90,7 +90,9 @@ func (*hostNetdev) Socket(domain, stype, protocol int) (int, error) {
 		protocol = syscall.IPPROTO_TCP
 	}
 
-	fd, err := syscall.Socket(domain, stype, protocol)
+	// Non-blocking so the poller (netpoll_native.go) can park goroutines on
+	// EAGAIN instead of pinning a thread in a blocking syscall.
+	fd, err := syscall.Socket(domain, stype|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC, protocol)
 	if err != nil {
 		return -1, err
 	}
@@ -121,10 +123,28 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 	sa := sockaddrFromParts(addr, ip.Port())
 	for {
 		err := syscall.Connect(sockfd, sa)
-		if err == syscall.EINTR {
+		switch err {
+		case nil:
+			return nil
+		case syscall.EINTR:
 			continue
+		case syscall.EINPROGRESS, syscall.EALREADY, syscall.EAGAIN:
+			// Non-blocking connect in progress: wait for the socket to become
+			// writable, then read the pending error via SO_ERROR.
+			if werr := poller.wait(sockfd, true, time.Time{}); werr != nil {
+				return werr
+			}
+			soErr, gerr := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_ERROR)
+			if gerr != nil {
+				return gerr
+			}
+			if soErr != 0 {
+				return syscall.Errno(soErr)
+			}
+			return nil
+		default:
+			return err
 		}
-		return err
 	}
 }
 
@@ -133,18 +153,33 @@ func (*hostNetdev) Listen(sockfd int, backlog int) error {
 }
 
 func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
-	nfd, sa, err := syscall.Accept(sockfd)
-	if err != nil {
-		return -1, netip.AddrPort{}, err
+	for {
+		// Accept4 with SOCK_NONBLOCK|SOCK_CLOEXEC keeps accepted sockets
+		// non-blocking too, so their reads/writes also go through the poller.
+		nfd, sa, err := syscall.Accept4(sockfd, syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC)
+		switch err {
+		case nil:
+		case syscall.EINTR:
+			continue
+		case syscall.EAGAIN: // == EWOULDBLOCK on Linux
+			// No pending connection: park until the listener is readable or the
+			// listening fd is closed (which unblocks accept for shutdown).
+			if werr := poller.wait(sockfd, false, time.Time{}); werr != nil {
+				return -1, netip.AddrPort{}, werr
+			}
+			continue
+		default:
+			return -1, netip.AddrPort{}, err
+		}
+		var raddr netip.AddrPort
+		switch s := sa.(type) {
+		case *syscall.SockaddrInet4:
+			raddr = netip.AddrPortFrom(netip.AddrFrom4(s.Addr), uint16(s.Port))
+		case *syscall.SockaddrInet6:
+			raddr = netip.AddrPortFrom(netip.AddrFrom16(s.Addr), uint16(s.Port))
+		}
+		return nfd, raddr, nil
 	}
-	var raddr netip.AddrPort
-	switch s := sa.(type) {
-	case *syscall.SockaddrInet4:
-		raddr = netip.AddrPortFrom(netip.AddrFrom4(s.Addr), uint16(s.Port))
-	case *syscall.SockaddrInet6:
-		raddr = netip.AddrPortFrom(netip.AddrFrom16(s.Addr), uint16(s.Port))
-	}
-	return nfd, raddr, nil
 }
 
 func (*hostNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
@@ -156,16 +191,18 @@ func (*hostNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (
 		if expired(deadline) {
 			return total, timeoutError{}
 		}
-		if err := setSockTimeout(sockfd, syscall.SO_SNDTIMEO, deadline); err != nil {
-			return total, err
-		}
 		n, err := syscall.Write(sockfd, buf[total:])
 		if err != nil {
 			if err == syscall.EINTR {
 				continue
 			}
 			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-				return total, timeoutError{}
+				// Send buffer full: park until writable, the deadline expires,
+				// or the fd is closed.
+				if werr := poller.wait(sockfd, true, deadline); werr != nil {
+					return total, werr
+				}
+				continue
 			}
 			return total, err
 		}
@@ -181,9 +218,6 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 	if expired(deadline) {
 		return 0, timeoutError{}
 	}
-	if err := setSockTimeout(sockfd, syscall.SO_RCVTIMEO, deadline); err != nil {
-		return 0, err
-	}
 
 	for {
 		n, err := syscall.Read(sockfd, buf)
@@ -192,7 +226,12 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 				continue
 			}
 			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-				return 0, timeoutError{}
+				// Nothing to read yet: park until readable, the deadline
+				// expires, or the fd is closed.
+				if werr := poller.wait(sockfd, false, deadline); werr != nil {
+					return 0, werr
+				}
+				continue
 			}
 			return n, err
 		}
@@ -208,6 +247,10 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 }
 
 func (*hostNetdev) Close(sockfd int) error {
+	// Wake any goroutines parked on this fd (with errPollClosed) before closing
+	// it, so a blocked Accept/Recv/Send returns promptly on shutdown instead of
+	// hanging — which is what lets graceful shutdown and Ctrl+C complete.
+	poller.close(sockfd)
 	return syscall.Close(sockfd)
 }
 
