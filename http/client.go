@@ -213,10 +213,14 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 
 		// TINYGO: Remove TLS error check
 
-		return nil, didTimeout, err
+		// didTimeout must be non-nil whenever err != nil: c.do calls
+		// didTimeout() on the error path. The named return is nil here (TinyGo
+		// dropped setRequestCancel), so return alwaysFalse instead to avoid a
+		// nil func-value dereference on a failed dial.
+		return nil, alwaysFalse, err
 	}
 	if resp == nil {
-		return nil, didTimeout, fmt.Errorf("http: sendit returned a nil *Response with a nil error")
+		return nil, alwaysFalse, fmt.Errorf("http: sendit returned a nil *Response with a nil error")
 	}
 
 	// TINYGO: Skip check for resp.Body == nil since we'll set it in roundTrip
