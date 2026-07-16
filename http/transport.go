@@ -61,6 +61,12 @@ type Transport struct {
 	// headers if the request has an "Expect: 100-continue" header.
 	ExpectContinueTimeout time.Duration
 
+	// TLSHandshakeTimeout specifies the maximum amount of time to
+	// wait for a TLS handshake. Zero means no timeout.
+	// Accepted for source compatibility with net/http; the TinyGo
+	// transport performs the handshake inline so this is advisory.
+	TLSHandshakeTimeout time.Duration
+
 	// MaxResponseHeaderBytes specifies a limit on how many response bytes are
 	// allowed in the server's response header. Zero means to use a default limit.
 	MaxResponseHeaderBytes int64
