@@ -120,6 +120,13 @@ func (c *IPConn) ReadFrom(b []byte) (int, Addr, error) {
 	return 0, nil, errors.New("ReadFrom not implemented")
 }
 
+// Read implements io.Reader / net.Conn. IPConn was missing it, which broke
+// callers that type-switch it as an io.Reader (e.g. google.golang.org/grpc).
+func (c *IPConn) Read(b []byte) (int, error) {
+	n, _, err := c.ReadFrom(b)
+	return n, err
+}
+
 // WriteToIP acts like WriteTo but takes an IPAddr.
 func (c *IPConn) WriteToIP(b []byte, addr *IPAddr) (int, error) {
 	return 0, errors.New("WriteToIP not implemented")
