@@ -36,9 +36,8 @@ type readTrackingBody struct {
 type Transport struct {
 	// Proxy specifies a function to return a proxy for a given Request.
 	//
-	// TINYGO: present for API compatibility (callers set it, e.g. skywire's
-	// forward-proxy); the netdev-backed transport dials directly and does not
-	// consult it.
+	// TINYGO: present for API compatibility; the netdev-backed transport dials
+	// directly and does not consult it.
 	Proxy func(*Request) (*url.URL, error)
 
 	// TLSClientConfig specifies the TLS configuration to use with tls.Client.
