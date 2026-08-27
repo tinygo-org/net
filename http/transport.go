@@ -34,6 +34,12 @@ type readTrackingBody struct {
 // golang.org/x/net/http2 and google.golang.org/grpc. They are stored but, aside
 // from fetch, have no effect at runtime.
 type Transport struct {
+	// Proxy specifies a function to return a proxy for a given Request.
+	//
+	// TINYGO: present for API compatibility; the netdev-backed transport dials
+	// directly and does not consult it.
+	Proxy func(*Request) (*url.URL, error)
+
 	// TLSClientConfig specifies the TLS configuration to use with tls.Client.
 	TLSClientConfig *tls.Config
 
@@ -128,6 +134,14 @@ func (t *Transport) Clone() *Transport {
 // connection.
 func ProxyFromEnvironment(req *Request) (*url.URL, error) {
 	return nil, nil
+}
+
+// ProxyURL returns a proxy function (for use in a Transport) that always returns
+// the same URL.
+func ProxyURL(fixedURL *url.URL) func(*Request) (*url.URL, error) {
+	return func(*Request) (*url.URL, error) {
+		return fixedURL, nil
+	}
 }
 
 // ErrSkipAltProtocol is a sentinel error value defined by Transport.RegisterProtocol.

@@ -27,6 +27,11 @@ import (
 	"golang.org/x/net/http/httpguts"
 )
 
+// ErrUseLastResponse can be returned by Client.CheckRedirect to control how
+// redirects are processed: the most recent response is returned with its body
+// unclosed, and the error is nil. TINYGO: provided for API compatibility.
+var ErrUseLastResponse = errors.New("net/http: use last response")
+
 // A Client is an HTTP client. Its zero value ([DefaultClient]) is a
 // usable client that uses [DefaultTransport].
 //
@@ -584,4 +589,14 @@ func (c *Client) Head(url string) (resp *Response, err error) {
 		return nil, err
 	}
 	return c.Do(req)
+}
+
+// CloseIdleConnections closes any connections on its Transport which were
+// previously connected from previous requests but are now idle. It delegates to
+// the Transport's CloseIdleConnections if it has one.
+func (c *Client) CloseIdleConnections() {
+	type closeIdler interface{ CloseIdleConnections() }
+	if tr, ok := c.Transport.(closeIdler); ok {
+		tr.CloseIdleConnections()
+	}
 }
