@@ -37,18 +37,20 @@ type Interface struct {
 
 // Addrs returns a list of unicast interface addresses for a specific
 // interface.
-//
-// TINYGO: not implemented; netdev exposes no per-interface address list.
 func (ifi *Interface) Addrs() ([]Addr, error) {
-	return nil, errors.New("Interface.Addrs not implemented")
+	if ifi == nil {
+		return nil, errInvalidInterface
+	}
+	return interfaceAddrTable(ifi)
 }
 
 // MulticastAddrs returns a list of multicast, joined group addresses
 // for a specific interface.
-//
-// TINYGO: not implemented; netdev exposes no per-interface address list.
 func (ifi *Interface) MulticastAddrs() ([]Addr, error) {
-	return nil, errors.New("Interface.MulticastAddrs not implemented")
+	if ifi == nil {
+		return nil, errInvalidInterface
+	}
+	return interfaceMulticastAddrTable(ifi)
 }
 
 type Flags uint
@@ -89,7 +91,7 @@ func (f Flags) String() string {
 
 // Interfaces returns a list of the system's network interfaces.
 func Interfaces() ([]Interface, error) {
-	return nil, errors.New("Interfaces not implemented")
+	return interfaceTable(0)
 }
 
 // InterfaceAddrs returns a list of the system's unicast interface
@@ -98,7 +100,7 @@ func Interfaces() ([]Interface, error) {
 // The returned list does not identify the associated interface; use
 // Interfaces and [Interface.Addrs] for more detail.
 func InterfaceAddrs() ([]Addr, error) {
-	return nil, errors.New("InterfaceAddrs not implemented")
+	return interfaceAddrTable(nil)
 }
 
 // InterfaceByIndex returns the interface specified by index.
@@ -107,10 +109,34 @@ func InterfaceAddrs() ([]Addr, error) {
 // sharing the logical data link; for more precision use
 // [InterfaceByName].
 func InterfaceByIndex(index int) (*Interface, error) {
-	return nil, errors.New("InterfaceByIndex not implemented")
+	if index <= 0 {
+		return nil, errInvalidInterfaceIndex
+	}
+	ift, err := interfaceTable(index)
+	if err != nil {
+		return nil, err
+	}
+	for i := range ift {
+		if index == ift[i].Index {
+			return &ift[i], nil
+		}
+	}
+	return nil, errNoSuchInterface
 }
 
 // InterfaceByName returns the interface specified by name.
 func InterfaceByName(name string) (*Interface, error) {
-	return nil, errors.New("InterfaceByName not implemented")
+	if name == "" {
+		return nil, errInvalidInterfaceName
+	}
+	ift, err := interfaceTable(0)
+	if err != nil {
+		return nil, err
+	}
+	for i := range ift {
+		if name == ift[i].Name {
+			return &ift[i], nil
+		}
+	}
+	return nil, errNoSuchInterface
 }
