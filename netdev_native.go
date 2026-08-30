@@ -1,17 +1,21 @@
-//go:build linux && !baremetal && !nintendoswitch && !wasm_unknown && !tinygo.wasm
+//go:build (linux || darwin) && !baremetal && !nintendoswitch && !wasm_unknown && !tinygo.wasm
 
-// TINYGO: Native (host) netdev for the TinyGo "linux" target.
+// TINYGO: Native (host) netdev for the TinyGo "linux" and "darwin" targets.
 //
-// On the native linux target TinyGo does NOT override the "syscall" package, so
-// the standard library's syscall.Socket/Connect/Bind/... are available and the
-// TinyGo compiler lowers syscall.Syscall/RawSyscall into real inline-asm system
-// calls (see compiler/syscall.go). That means we can implement the netdever
-// interface directly on top of raw Linux sockets, without needing a network
-// driver or musl's (omitted) src/network module.
+// On those native targets TinyGo does NOT override the "syscall" package, so
+// the standard library's syscall.Socket/Connect/Bind/... are available: on
+// linux the TinyGo compiler lowers syscall.Syscall/RawSyscall into real
+// inline-asm system calls, and on darwin it routes the libc_*_trampoline
+// symbols to libSystem (see compiler/syscall.go). Either way we can implement
+// the netdever interface directly on top of raw host sockets, without needing a
+// network driver or musl's (omitted) src/network module.
 //
 // This file registers that implementation as the default netdev, so that
-// net.Dial/Listen/Lookup just work on a regular Linux host. See
+// net.Dial/Listen/Lookup just work on a regular Linux or macOS host. See
 // https://github.com/skycoin/skycoin/issues/2902.
+//
+// The per-OS socket defaults are in netdev_native_linux.go and
+// netdev_native_darwin.go. Everything else here is common to the two.
 
 package net
 
@@ -31,7 +35,7 @@ func init() {
 	useNetdev(&hostNetdev{})
 }
 
-// hostNetdev implements netdever using raw Linux sockets via the syscall
+// hostNetdev implements netdever using raw host sockets via the syscall
 // package. The "sockfd" values it returns are plain OS file descriptors.
 //
 // Deadlines are implemented with the per-socket SO_RCVTIMEO/SO_SNDTIMEO
@@ -95,11 +99,7 @@ func (*hostNetdev) Socket(domain, stype, protocol int) (int, error) {
 		return -1, err
 	}
 
-	// Allow quick rebind of listening sockets (e.g. restarting a server),
-	// matching the standard library's behaviour.
-	if stype == syscall.SOCK_STREAM {
-		syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
-	}
+	setSockDefaults(fd, stype)
 
 	return fd, nil
 }
@@ -133,10 +133,22 @@ func (*hostNetdev) Listen(sockfd int, backlog int) error {
 }
 
 func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
-	nfd, sa, err := syscall.Accept(sockfd)
+	var nfd int
+	var sa syscall.Sockaddr
+	var err error
+	for {
+		// A signal from the runtime interrupts a blocking accept, so retry
+		// instead of a report of a failure that the caller cannot act on.
+		nfd, sa, err = syscall.Accept(sockfd)
+		if err == syscall.EINTR {
+			continue
+		}
+		break
+	}
 	if err != nil {
 		return -1, netip.AddrPort{}, err
 	}
+	setSockDefaults(nfd, syscall.SOCK_STREAM)
 	var raddr netip.AddrPort
 	switch s := sa.(type) {
 	case *syscall.SockaddrInet4:
