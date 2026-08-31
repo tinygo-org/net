@@ -2328,7 +2328,9 @@ type ServeMux struct {
 
 type muxEntry struct {
 	h       Handler
-	pattern string
+	pattern string // full original pattern, e.g. "GET /foo" or "/files/{x...}"
+	method  string // parsed HTTP method, "" if the pattern has no method prefix
+	path    string // path part only (pattern with any leading "METHOD " stripped)
 }
 
 // NewServeMux allocates and returns a new ServeMux.
@@ -2374,77 +2376,204 @@ func stripHostPort(h string) string {
 	return host
 }
 
-// Find a handler on a handler map given a path string.
-// Most-specific (longest) pattern wins.
-func (mux *ServeMux) match(path string) (h Handler, pattern string) {
-	// Check for exact match first.
-	v, ok := mux.m[path]
-	if ok {
-		return v.h, v.pattern
-	}
+// methodMatches reports whether an entry registered with entryMethod (which is
+// "" when the pattern had no method prefix) may serve a request whose method is
+// reqMethod. An entry with no method matches any method.
+func methodMatches(entryMethod, reqMethod string) bool {
+	return entryMethod == "" || entryMethod == reqMethod
+}
 
-	// Check for longest valid match with path placeholders (like /users/{id})
-	// First collect all potential matching patterns
-	var matchingPatterns []string
-	for registeredPattern := range mux.m {
-		// Skip patterns ending with "/" as they are handled separately
-		if registeredPattern[len(registeredPattern)-1] == '/' {
+// Find a handler on a handler map given a request method and path string.
+// Among all registered patterns whose method is compatible and whose path can
+// match, the MOST SPECIFIC one wins, mirroring stdlib net/http precedence:
+// segment kinds are compared left-to-right and, at the first differing
+// position, the more specific kind wins (literal / {$} > single {id} >
+// multi {x...} > trailing-slash subtree). Length is only a final tie-break.
+// Only entries whose method is empty or equal to reqMethod are eligible.
+func (mux *ServeMux) match(reqMethod, path string) (h Handler, pattern string) {
+	// Patterns may carry a method prefix, so the map is keyed on the full
+	// pattern (e.g. "GET /foo"); iterate rather than doing a direct map lookup.
+	var best *muxEntry
+	for key := range mux.m {
+		e := mux.m[key]
+		if !methodMatches(e.method, reqMethod) {
 			continue
 		}
+		if !entryMatches(e.path, path) {
+			continue
+		}
+		if best == nil || moreSpecificEntry(e, *best) {
+			ee := e
+			best = &ee
+		}
+	}
+	if best == nil {
+		return nil, ""
+	}
+	return best.h, best.pattern
+}
 
-		// If the pattern contains placeholders and could match the path
-		if strings.Contains(registeredPattern, "{") && strings.Contains(registeredPattern, "}") {
-			if patternCouldMatch(registeredPattern, path) {
-				matchingPatterns = append(matchingPatterns, registeredPattern)
+// entryMatches reports whether the entry path can serve lookupPath, covering
+// exact, placeholder ({id} / {x...} / {$}) and trailing-slash subtree forms.
+func entryMatches(entryPath, lookupPath string) bool {
+	if entryPath == lookupPath {
+		return true
+	}
+	if entryPath[len(entryPath)-1] == '/' {
+		// Trailing-slash subtree: matches any path under the prefix.
+		return strings.HasPrefix(lookupPath, entryPath)
+	}
+	if strings.Contains(entryPath, "{") && strings.Contains(entryPath, "}") {
+		return patternCouldMatch(entryPath, lookupPath)
+	}
+	return false
+}
+
+// moreSpecificEntry reports whether entry a should win over entry b for the
+// same lookup path.
+func moreSpecificEntry(a, b muxEntry) bool {
+	// A trailing-slash subtree is the least specific (it behaves like a
+	// multi-segment wildcard tail); any non-subtree pattern beats a subtree.
+	aSub := a.path[len(a.path)-1] == '/'
+	bSub := b.path[len(b.path)-1] == '/'
+	if aSub != bSub {
+		return bSub // a wins iff b is the (less specific) subtree
+	}
+	if aSub && bSub {
+		// Both subtrees: longer prefix wins, then method-specific.
+		if len(a.path) != len(b.path) {
+			return len(a.path) > len(b.path)
+		}
+		return a.method != "" && b.method == ""
+	}
+	// Both exact/placeholder patterns: rank by per-segment specificity.
+	if morePrecise(a.path, b.path) {
+		return true
+	}
+	if morePrecise(b.path, a.path) {
+		return false
+	}
+	// Equal specificity: a method-specific entry beats a method-less one.
+	return a.method != "" && b.method == ""
+}
+
+// specificityRank maps a segment kind to a precedence weight (higher = more
+// specific), mirroring stdlib net/http: a literal is more specific than a
+// single-segment capture {id}, which is more specific than a multi-segment
+// wildcard {x...}. The {$} end anchor matches a single exact end position and
+// ranks with literals.
+func specificityRank(kind int) int {
+	switch kind {
+	case segLiteral, segEnd:
+		return 3
+	case segCapture:
+		return 2
+	case segMulti:
+		return 1
+	}
+	return 0
+}
+
+// morePrecise reports whether pattern a is strictly more specific than b:
+// compare segment kinds left-to-right and, at the first position whose kinds
+// differ, the more specific kind wins. If all compared kinds tie, the longer
+// pattern (more segments / longer literals) wins.
+func morePrecise(a, b string) bool {
+	as := splitSegs(a)
+	bs := splitSegs(b)
+	n := len(as)
+	if len(bs) < n {
+		n = len(bs)
+	}
+	for i := 0; i < n; i++ {
+		ka, _ := classifySeg(as[i])
+		kb, _ := classifySeg(bs[i])
+		ra, rb := specificityRank(ka), specificityRank(kb)
+		if ra != rb {
+			return ra > rb
+		}
+	}
+	return len(a) > len(b)
+}
+
+// Segment kinds for a pattern segment.
+const (
+	segLiteral = iota // literal text, must match exactly
+	segCapture        // {id}: matches one non-empty segment, captured by name
+	segMulti          // {rest...}: trailing multi-segment wildcard (last only)
+	segEnd            // {$}: end-of-path anchor (no capture)
+)
+
+// classifySeg classifies a single pattern segment and returns the capture name
+// (for segCapture / segMulti; empty otherwise).
+func classifySeg(seg string) (kind int, name string) {
+	if !strings.HasPrefix(seg, "{") || !strings.HasSuffix(seg, "}") {
+		return segLiteral, ""
+	}
+	inner := seg[1 : len(seg)-1]
+	if inner == "$" {
+		return segEnd, ""
+	}
+	if strings.HasSuffix(inner, "...") {
+		return segMulti, inner[:len(inner)-len("...")]
+	}
+	return segCapture, inner
+}
+
+// splitSegs splits a path/pattern into segments. Unlike a plain
+// strings.Split(strings.Trim(s,"/"),"/") it preserves a single trailing empty
+// segment (so "/a/" -> ["a",""] and "/" -> [""]), which the {$} end-anchor and
+// the {x...} multi-wildcard rely on.
+func splitSegs(s string) []string {
+	t := strings.TrimPrefix(s, "/")
+	if t == "" {
+		return []string{""}
+	}
+	return strings.Split(t, "/")
+}
+
+// patternCouldMatch checks if a pattern with placeholders could match the given
+// path. It handles single captures (/users/{id}), the trailing multi-segment
+// wildcard (/files/{path...}), and the end-of-path anchor (/exact/{$}).
+func patternCouldMatch(pattern, path string) bool {
+	patternParts := splitSegs(pattern)
+	pathParts := splitSegs(path)
+
+	for i, pp := range patternParts {
+		kind, _ := classifySeg(pp)
+
+		switch kind {
+		case segEnd:
+			// {$} is only valid as the final pattern segment and matches only
+			// the empty final path segment (a path written like "/exact/").
+			if i != len(patternParts)-1 {
+				return false
+			}
+			return i == len(pathParts)-1 && pathParts[i] == ""
+
+		case segMulti:
+			// Trailing multi-segment wildcard: must be the final pattern
+			// segment and consumes all remaining path segments.
+			if i != len(patternParts)-1 {
+				return false
+			}
+			return i <= len(pathParts)-1
+
+		case segCapture:
+			// {id} matches exactly one non-empty segment.
+			if i >= len(pathParts) || pathParts[i] == "" {
+				return false
+			}
+
+		default: // literal
+			if i >= len(pathParts) || pp != pathParts[i] {
+				return false
 			}
 		}
 	}
 
-	// Find the longest matching pattern
-	if len(matchingPatterns) > 0 {
-		sort.Slice(matchingPatterns, func(i, j int) bool {
-			return len(matchingPatterns[i]) > len(matchingPatterns[j])
-		})
-
-		pattern = matchingPatterns[0]
-		return mux.m[pattern].h, pattern
-	}
-
-	// Check for longest valid match.  mux.es contains all patterns
-	// that end in / sorted from longest to shortest.
-	for _, e := range mux.es {
-		if strings.HasPrefix(path, e.pattern) {
-			return e.h, e.pattern
-		}
-	}
-	return nil, ""
-}
-
-// patternCouldMatch checks if a pattern with placeholders could match the given path.
-// It handles patterns like /users/{id}/orders/{orderId}.
-func patternCouldMatch(pattern, path string) bool {
-	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
-	pathParts := strings.Split(strings.Trim(path, "/"), "/")
-
-	// If they have different number of parts, they can't match
-	if len(patternParts) != len(pathParts) {
-		return false
-	}
-
-	// Check each part
-	for i, patternPart := range patternParts {
-		// If it's a placeholder, it matches anything
-		if strings.HasPrefix(patternPart, "{") && strings.HasSuffix(patternPart, "}") {
-			continue
-		}
-
-		// If it's not a placeholder, it must match exactly
-		if patternPart != pathParts[i] {
-			return false
-		}
-	}
-
-	return true
+	// No multi/anchor consumed the tail: segment counts must match exactly.
+	return len(patternParts) == len(pathParts)
 }
 
 // redirectToPathSlash determines if the given path needs appending "/" to it.
@@ -2514,7 +2643,7 @@ func (mux *ServeMux) Handler(r *Request) (h Handler, pattern string) {
 			return RedirectHandler(u.String(), StatusMovedPermanently), u.Path
 		}
 
-		return mux.handler(r.Host, r.URL.Path)
+		return mux.handler(r.Method, r.Host, r.URL.Path)
 	}
 
 	// All other requests have any port stripped and path cleaned
@@ -2529,26 +2658,26 @@ func (mux *ServeMux) Handler(r *Request) (h Handler, pattern string) {
 	}
 
 	if path != r.URL.Path {
-		_, pattern = mux.handler(host, path)
+		_, pattern = mux.handler(r.Method, host, path)
 		u := &url.URL{Path: path, RawQuery: r.URL.RawQuery}
 		return RedirectHandler(u.String(), StatusMovedPermanently), pattern
 	}
 
-	return mux.handler(host, r.URL.Path)
+	return mux.handler(r.Method, host, r.URL.Path)
 }
 
 // handler is the main implementation of Handler.
 // The path is known to be in canonical form, except for CONNECT methods.
-func (mux *ServeMux) handler(host, path string) (h Handler, pattern string) {
+func (mux *ServeMux) handler(method, host, path string) (h Handler, pattern string) {
 	mux.mu.RLock()
 	defer mux.mu.RUnlock()
 
 	// Host-specific pattern takes precedence over generic ones
 	if mux.hosts {
-		h, pattern = mux.match(host + path)
+		h, pattern = mux.match(method, host+path)
 	}
 	if h == nil {
-		h, pattern = mux.match(path)
+		h, pattern = mux.match(method, path)
 	}
 	if h == nil {
 		h, pattern = NotFoundHandler(), ""
@@ -2562,24 +2691,33 @@ func (mux *ServeMux) handler(host, path string) (h Handler, pattern string) {
 func extractPathValues(pattern, path string) map[string]string {
 	pathValues := make(map[string]string)
 
-	// Split both pattern and path by "/"
-	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
-	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+	patternParts := splitSegs(pattern)
+	pathParts := splitSegs(path)
 
-	// If they have different lengths, they can't match (unless the pattern has a wildcard)
-	if len(patternParts) != len(pathParts) {
-		return pathValues
-	}
+	for i, pp := range patternParts {
+		kind, name := classifySeg(pp)
 
-	// Compare each part
-	for i, patternPart := range patternParts {
-		if strings.HasPrefix(patternPart, "{") && strings.HasSuffix(patternPart, "}") {
-			// This is a placeholder like {id}
-			paramName := patternPart[1 : len(patternPart)-1]
-			pathValues[paramName] = pathParts[i]
-		} else if patternPart != pathParts[i] {
-			// If a non-placeholder part doesn't match, return empty
-			return make(map[string]string)
+		switch kind {
+		case segEnd:
+			// {$} is an anchor, not a capture; nothing to store.
+			return pathValues
+		case segMulti:
+			// Trailing wildcard captures the joined remainder (possibly empty).
+			if i <= len(pathParts)-1 {
+				pathValues[name] = strings.Join(pathParts[i:], "/")
+			} else {
+				pathValues[name] = ""
+			}
+			return pathValues
+		case segCapture:
+			if i < len(pathParts) {
+				pathValues[name] = pathParts[i]
+			}
+		default: // literal
+			if i >= len(pathParts) || pp != pathParts[i] {
+				// If a non-placeholder part doesn't match, return empty.
+				return make(map[string]string)
+			}
 		}
 	}
 
@@ -2598,9 +2736,11 @@ func (mux *ServeMux) ServeHTTP(w ResponseWriter, r *Request) {
 	}
 	h, pattern := mux.Handler(r)
 
-	// Extract path values for patterns that contain placeholders like {id}
+	// Extract path values for patterns that contain placeholders like {id}.
+	// Strip any leading "METHOD " so values come from the path part only.
 	if strings.Contains(pattern, "{") && strings.Contains(pattern, "}") {
-		pathValues := extractPathValues(pattern, r.URL.Path)
+		_, patternPath := parseMethod(pattern)
+		pathValues := extractPathValues(patternPath, r.URL.Path)
 
 		// Set path values in the request
 		for name, value := range pathValues {
@@ -2630,21 +2770,54 @@ func (mux *ServeMux) Handle(pattern string, handler Handler) {
 	if mux.m == nil {
 		mux.m = make(map[string]muxEntry)
 	}
-	e := muxEntry{h: handler, pattern: pattern}
+	// Parse an optional leading "METHOD " so the rest of the routing logic works
+	// on the path part only, and so a method prefix never sets mux.hosts.
+	method, patternPath := parseMethod(pattern)
+	// A pattern that strips to an empty path (e.g. "GET ") is invalid; stdlib
+	// rejects it. Guard before indexing patternPath[len-1] / patternPath[0].
+	if patternPath == "" {
+		panic("http: invalid pattern")
+	}
+	e := muxEntry{h: handler, pattern: pattern, method: method, path: patternPath}
 	mux.m[pattern] = e
-	if pattern[len(pattern)-1] == '/' {
+	if patternPath[len(patternPath)-1] == '/' {
 		mux.es = appendSorted(mux.es, e)
 	}
 
-	if pattern[0] != '/' {
+	if patternPath[0] != '/' {
 		mux.hosts = true
 	}
+}
+
+// parseMethod splits an optional leading "METHOD " off a pattern. A method is a
+// token before the first space consisting solely of upper-case ASCII letters.
+// If there is no such prefix it returns ("", pattern).
+func parseMethod(pattern string) (method, path string) {
+	if i := strings.IndexByte(pattern, ' '); i >= 0 {
+		cand := pattern[:i]
+		if isMethodToken(cand) {
+			return cand, strings.TrimLeft(pattern[i+1:], " ")
+		}
+	}
+	return "", pattern
+}
+
+func isMethodToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < 'A' || s[i] > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func appendSorted(es []muxEntry, e muxEntry) []muxEntry {
 	n := len(es)
 	i := sort.Search(n, func(i int) bool {
-		return len(es[i].pattern) < len(e.pattern)
+		return len(es[i].path) < len(e.path)
 	})
 	if i == n {
 		return append(es, e)
