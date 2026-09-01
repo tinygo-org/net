@@ -148,6 +148,13 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 	}
 }
 
+// PollInterrupt wakes any goroutine parked in Recv/Send on sockfd so it
+// re-evaluates its deadline. The net package calls this (through an optional
+// interface) when a deadline is changed on a connection with I/O in flight.
+func (*hostNetdev) PollInterrupt(sockfd int, write bool) {
+	poller.interrupt(sockfd, write)
+}
+
 func (*hostNetdev) Listen(sockfd int, backlog int) error {
 	return syscall.Listen(sockfd, backlog)
 }

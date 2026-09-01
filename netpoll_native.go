@@ -30,6 +30,14 @@ type pollDesc struct {
 	readers []chan error
 	writers []chan error
 	inEpoll bool
+
+	// readInterrupt/writeInterrupt record an interrupt() that arrived while no
+	// waiter was parked in that direction, so the next wait() in that direction
+	// returns immediately instead of parking with a deadline that may already
+	// be stale. This closes the race between a deadline change and a goroutine
+	// that captured the old deadline but has not parked yet.
+	readInterrupt  bool
+	writeInterrupt bool
 }
 
 type netPoller struct {
@@ -79,7 +87,9 @@ func (p *netPoller) arm(pd *pollDesc) {
 			syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_DEL, pd.fd, nil)
 			pd.inEpoll = false
 		}
-		delete(p.fds, pd.fd)
+		if !pd.readInterrupt && !pd.writeInterrupt {
+			delete(p.fds, pd.fd)
+		}
 		return
 	}
 	event := &syscall.EpollEvent{Events: ev, Fd: int32(pd.fd)}
@@ -107,6 +117,18 @@ func (p *netPoller) wait(fd int, write bool, deadline time.Time) error {
 	if pd == nil {
 		pd = &pollDesc{fd: fd}
 		p.fds[fd] = pd
+	}
+	if (write && pd.writeInterrupt) || (!write && pd.readInterrupt) {
+		// An interrupt arrived before we parked; consume it and let the caller
+		// re-evaluate its deadline.
+		if write {
+			pd.writeInterrupt = false
+		} else {
+			pd.readInterrupt = false
+		}
+		p.arm(pd)
+		p.mu.Unlock()
+		return errPollInterrupted
 	}
 	if write {
 		pd.writers = append(pd.writers, ch)
@@ -152,6 +174,47 @@ func (p *netPoller) cancelWaiter(fd int, write bool, ch chan error) {
 		pd.readers = removeChan(pd.readers, ch)
 	}
 	p.arm(pd)
+}
+
+// interrupt wakes every goroutine parked on fd in the given direction with
+// errPollInterrupted so it re-evaluates its deadline (a deadline change on a
+// connection must take effect on I/O that is already blocked — net/http's
+// abortPendingRead relies on this). If no waiter is parked yet, the interrupt
+// is remembered and consumed by the next wait() in that direction.
+func (p *netPoller) interrupt(fd int, write bool) {
+	if p.err != nil {
+		return
+	}
+	p.mu.Lock()
+	if p.fds == nil {
+		// Poller never started: nothing can be parked, and any future wait()
+		// will capture the new deadline anyway.
+		p.mu.Unlock()
+		return
+	}
+	pd := p.fds[fd]
+	if pd == nil {
+		pd = &pollDesc{fd: fd}
+		p.fds[fd] = pd
+	}
+	var chs []chan error
+	if write {
+		chs, pd.writers = pd.writers, nil
+		if len(chs) == 0 {
+			pd.writeInterrupt = true
+		}
+	} else {
+		chs, pd.readers = pd.readers, nil
+		if len(chs) == 0 {
+			pd.readInterrupt = true
+		}
+	}
+	p.arm(pd)
+	p.mu.Unlock()
+
+	for _, ch := range chs {
+		ch <- errPollInterrupted
+	}
 }
 
 // close wakes every goroutine parked on fd with errPollClosed and stops polling
