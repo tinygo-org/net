@@ -395,6 +395,19 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 		return nil, err
 	}
 
+	if laddr.Port == 0 {
+		// Binding port 0 asks for an ephemeral port; report the port that was
+		// actually assigned, like the standard library, so callers can dial
+		// ln.Addr(). Netdevs that cannot report it keep port 0.
+		if g, ok := netdev.(interface {
+			GetSockname(sockfd int) (netip.AddrPort, error)
+		}); ok {
+			if ap, err := g.GetSockname(fd); err == nil && ap.Port() != 0 {
+				laddr = &TCPAddr{IP: laddr.IP, Port: int(ap.Port())}
+			}
+		}
+	}
+
 	return &listener{fd: fd, laddr: laddr}, nil
 }
 
