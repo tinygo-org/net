@@ -158,7 +158,7 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 			req.AddCookie(cookie)
 		}
 	}
-	resp, didTimeout, err = send(req, deadline)
+	resp, didTimeout, err = send(req, c.transport(), deadline)
 	if err != nil {
 		return nil, didTimeout, err
 	}
@@ -177,11 +177,16 @@ func (c *Client) deadline() time.Time {
 	return time.Time{}
 }
 
+func (c *Client) transport() RoundTripper {
+	if c.Transport != nil {
+		return c.Transport
+	}
+	return DefaultTransport
+}
+
 // send issues an HTTP request.
 // Caller should close resp.Body when done reading from it.
-func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
-
-	// TINYGO: Removed round tripper
+func send(req *Request, rt RoundTripper, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
 
 	if req.URL == nil {
 		req.closeBody()
@@ -191,6 +196,10 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 	if req.RequestURI != "" {
 		req.closeBody()
 		return nil, alwaysFalse, errors.New("http: Request.RequestURI can't be set in client requests")
+	}
+	if rt == nil {
+		req.closeBody()
+		return nil, alwaysFalse, errors.New("http: no Client.Transport or DefaultTransport")
 	}
 
 	// TINYGO: Removed forkReq stuff
@@ -208,7 +217,7 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 		req.Header.Set("Authorization", "Basic "+basicAuth(username, password))
 	}
 
-	resp, err = roundTrip(req)
+	resp, err = rt.RoundTrip(req)
 	if err != nil {
 
 		// TINYGO: Remove TLS error check
@@ -440,10 +449,6 @@ func urlErrorOp(method string) string {
 // Any returned error will be of type [*url.Error]. The url.Error
 // value's Timeout method will report true if the request timed out.
 func (c *Client) Do(req *Request) (*Response, error) {
-	if c.Transport != nil {
-		return c.Transport.RoundTrip(req)
-	}
-
 	return c.do(req)
 }
 
