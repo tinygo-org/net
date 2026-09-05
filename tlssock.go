@@ -10,7 +10,6 @@ package net
 
 import (
 	"context"
-	"internal/itoa"
 	"io"
 	"net/netip"
 	"strconv"
@@ -29,7 +28,7 @@ func (a *TLSAddr) String() string {
 	if a == nil {
 		return "<nil>"
 	}
-	return JoinHostPort(a.Host, itoa.Itoa(a.Port))
+	return JoinHostPort(a.Host, netItoa(a.Port))
 }
 
 // A TLSConn represents a secured connection.
