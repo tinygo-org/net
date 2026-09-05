@@ -396,14 +396,13 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 	}
 
 	if laddr.Port == 0 {
-		// Binding port 0 asks for an ephemeral port; report the port that was
-		// actually assigned, like the standard library, so callers can dial
-		// ln.Addr(). Netdevs that cannot report it keep port 0.
+		// Report the selected port. See https://pkg.go.dev/net#Listen.
+		// Drivers without GetSockname keep the requested address.
 		if g, ok := netdev.(interface {
 			GetSockname(sockfd int) (netip.AddrPort, error)
 		}); ok {
 			if ap, err := g.GetSockname(fd); err == nil && ap.Port() != 0 {
-				laddr = &TCPAddr{IP: laddr.IP, Port: int(ap.Port())}
+				laddr = &TCPAddr{IP: laddr.IP, Port: int(ap.Port()), Zone: laddr.Zone}
 			}
 		}
 	}
