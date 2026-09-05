@@ -395,6 +395,18 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 		return nil, err
 	}
 
+	if laddr.Port == 0 {
+		// Report the selected port. See https://pkg.go.dev/net#Listen.
+		// Drivers without GetSockname keep the requested address.
+		if g, ok := netdev.(interface {
+			GetSockname(sockfd int) (netip.AddrPort, error)
+		}); ok {
+			if ap, err := g.GetSockname(fd); err == nil && ap.Port() != 0 {
+				laddr = &TCPAddr{IP: laddr.IP, Port: int(ap.Port()), Zone: laddr.Zone}
+			}
+		}
+	}
+
 	return &listener{fd: fd, laddr: laddr}, nil
 }
 
