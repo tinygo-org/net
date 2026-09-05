@@ -33,6 +33,21 @@ const (
 var netdev netdever = &nopNetdev{}
 
 // (useNetdev is go:linkname'd from tinygo/drivers package)
+// errPollInterrupted is returned from a netdev's Recv/Send when a concurrent
+// deadline change interrupted a blocked operation. The net package retries the
+// operation with the fresh deadline; the error never escapes to callers.
+var errPollInterrupted = errors.New("net: I/O interrupted by deadline change")
+
+// pollInterrupt asks a netdev that supports it to wake goroutines blocked in
+// Recv (write=false) or Send (write=true) on sockfd so they re-evaluate a
+// just-changed deadline. Netdevs without that ability ignore deadline changes
+// on in-flight I/O, as before.
+func pollInterrupt(sockfd int, write bool) {
+	if p, ok := netdev.(interface{ PollInterrupt(sockfd int, write bool) }); ok {
+		p.PollInterrupt(sockfd, write)
+	}
+}
+
 func useNetdev(dev netdever) {
 	netdev = dev
 }

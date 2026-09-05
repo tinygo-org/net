@@ -143,6 +143,7 @@ func TCPAddrFromAddrPort(addr netip.AddrPort) *TCPAddr {
 // TCPConn is an implementation of the [Conn] interface for TCP network
 // connections.
 type TCPConn struct {
+	closer        closeGuard
 	fd            int
 	net           string
 	laddr         *TCPAddr
@@ -208,6 +209,11 @@ func (c *TCPConn) SyscallConn() (syscall.RawConn, error) {
 
 func (c *TCPConn) Read(b []byte) (int, error) {
 	n, err := netdev.Recv(c.fd, b, 0, c.readDeadline)
+	for err == errPollInterrupted {
+		// A concurrent deadline change interrupted the wait; retry with the
+		// fresh deadline. Nothing was read when the wait was interrupted.
+		n, err = netdev.Recv(c.fd, b, 0, c.readDeadline)
+	}
 	// Turn the -1 socket error into 0 and let err speak for error
 	if n < 0 {
 		n = 0
@@ -219,19 +225,26 @@ func (c *TCPConn) Read(b []byte) (int, error) {
 }
 
 func (c *TCPConn) Write(b []byte) (int, error) {
-	n, err := netdev.Send(c.fd, b, 0, c.writeDeadline)
-	// Turn the -1 socket error into 0 and let err speak for error
-	if n < 0 {
-		n = 0
+	total := 0
+	for {
+		n, err := netdev.Send(c.fd, b[total:], 0, c.writeDeadline)
+		if n > 0 {
+			total += n
+		}
+		if err == errPollInterrupted {
+			// A concurrent deadline change interrupted the wait; keep sending
+			// the remainder under the fresh deadline.
+			continue
+		}
+		if err != nil {
+			err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
+		}
+		return total, err
 	}
-	if err != nil {
-		err = &OpError{Op: "write", Net: c.net, Source: c.laddr, Addr: c.raddr, Err: err}
-	}
-	return n, err
 }
 
 func (c *TCPConn) Close() error {
-	return netdev.Close(c.fd)
+	return c.closer.close(c.fd)
 }
 
 func (c *TCPConn) LocalAddr() Addr {
@@ -245,6 +258,8 @@ func (c *TCPConn) RemoteAddr() Addr {
 func (c *TCPConn) SetDeadline(t time.Time) error {
 	c.readDeadline = t
 	c.writeDeadline = t
+	pollInterrupt(c.fd, false)
+	pollInterrupt(c.fd, true)
 	return nil
 }
 
@@ -284,11 +299,13 @@ func (c *TCPConn) SetKeepAlivePeriod(d time.Duration) error {
 
 func (c *TCPConn) SetReadDeadline(t time.Time) error {
 	c.readDeadline = t
+	pollInterrupt(c.fd, false)
 	return nil
 }
 
 func (c *TCPConn) SetWriteDeadline(t time.Time) error {
 	c.writeDeadline = t
+	pollInterrupt(c.fd, true)
 	return nil
 }
 
@@ -352,8 +369,9 @@ type onlyWriter struct {
 }
 
 type listener struct {
-	fd    int
-	laddr *TCPAddr
+	closer closeGuard
+	fd     int
+	laddr  *TCPAddr
 }
 
 func (l *listener) Accept() (Conn, error) {
@@ -371,7 +389,7 @@ func (l *listener) Accept() (Conn, error) {
 }
 
 func (l *listener) Close() error {
-	return netdev.Close(l.fd)
+	return l.closer.close(l.fd)
 }
 
 func (l *listener) Addr() Addr {

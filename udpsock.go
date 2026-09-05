@@ -127,6 +127,7 @@ func UDPAddrFromAddrPort(addr netip.AddrPort) *UDPAddr {
 // UDPConn is the implementation of the Conn and PacketConn interfaces
 // for UDP network connections.
 type UDPConn struct {
+	closer        closeGuard
 	fd            int
 	net           string
 	laddr         *UDPAddr
@@ -269,6 +270,9 @@ func (c *UDPConn) SyscallConn() (syscall.RawConn, error) {
 
 func (c *UDPConn) Read(b []byte) (int, error) {
 	n, err := netdev.Recv(c.fd, b, 0, c.readDeadline)
+	for err == errPollInterrupted {
+		n, err = netdev.Recv(c.fd, b, 0, c.readDeadline)
+	}
 	// Turn the -1 socket error into 0 and let err speak for error
 	if n < 0 {
 		n = 0
@@ -281,6 +285,9 @@ func (c *UDPConn) Read(b []byte) (int, error) {
 
 func (c *UDPConn) Write(b []byte) (int, error) {
 	n, err := netdev.Send(c.fd, b, 0, c.writeDeadline)
+	for err == errPollInterrupted {
+		n, err = netdev.Send(c.fd, b, 0, c.writeDeadline)
+	}
 	// Turn the -1 socket error into 0 and let err speak for error
 	if n < 0 {
 		n = 0
@@ -297,6 +304,9 @@ func (c *UDPConn) Write(b []byte) (int, error) {
 // remote address (c.raddr) is returned as the source.
 func (c *UDPConn) ReadFromUDP(b []byte) (int, *UDPAddr, error) {
 	n, err := netdev.Recv(c.fd, b, 0, c.readDeadline)
+	for err == errPollInterrupted {
+		n, err = netdev.Recv(c.fd, b, 0, c.readDeadline)
+	}
 	if n < 0 {
 		n = 0
 	}
@@ -321,6 +331,9 @@ func (c *UDPConn) ReadFromUDPAddrPort(b []byte) (n int, addr netip.AddrPort, err
 // connected remote regardless of addr, mirroring netdev.Send.
 func (c *UDPConn) WriteToUDP(b []byte, addr *UDPAddr) (int, error) {
 	n, err := netdev.Send(c.fd, b, 0, c.writeDeadline)
+	for err == errPollInterrupted {
+		n, err = netdev.Send(c.fd, b, 0, c.writeDeadline)
+	}
 	if n < 0 {
 		n = 0
 	}
@@ -386,7 +399,7 @@ func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err er
 }
 
 func (c *UDPConn) Close() error {
-	return netdev.Close(c.fd)
+	return c.closer.close(c.fd)
 }
 
 func (c *UDPConn) LocalAddr() Addr {
@@ -400,15 +413,19 @@ func (c *UDPConn) RemoteAddr() Addr {
 func (c *UDPConn) SetDeadline(t time.Time) error {
 	c.readDeadline = t
 	c.writeDeadline = t
+	pollInterrupt(c.fd, false)
+	pollInterrupt(c.fd, true)
 	return nil
 }
 
 func (c *UDPConn) SetReadDeadline(t time.Time) error {
 	c.readDeadline = t
+	pollInterrupt(c.fd, false)
 	return nil
 }
 
 func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	c.writeDeadline = t
+	pollInterrupt(c.fd, true)
 	return nil
 }
