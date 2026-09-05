@@ -191,8 +191,8 @@ func addrPortFromSockaddr(sa syscall.Sockaddr) netip.AddrPort {
 	return netip.AddrPort{}
 }
 
-// GetSockname reports the bound local address, including a port the kernel
-// picked for port 0.
+// GetSockname reports the bound address.
+// See https://pkg.go.dev/syscall#Getsockname.
 func (*hostNetdev) GetSockname(sockfd int) (netip.AddrPort, error) {
 	sa, err := syscall.Getsockname(sockfd)
 	if err != nil {
