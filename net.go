@@ -9,8 +9,24 @@ package net
 import (
 	"errors"
 	"io"
+	"sync"
 	"time"
 )
+
+type closeGuard struct {
+	mu     sync.Mutex
+	closed bool
+}
+
+func (c *closeGuard) close(fd int) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return ErrClosed
+	}
+	c.closed = true
+	return netdev.Close(fd)
+}
 
 // Addr represents a network end point address.
 //

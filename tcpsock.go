@@ -143,6 +143,7 @@ func TCPAddrFromAddrPort(addr netip.AddrPort) *TCPAddr {
 // TCPConn is an implementation of the [Conn] interface for TCP network
 // connections.
 type TCPConn struct {
+	closer        closeGuard
 	fd            int
 	net           string
 	laddr         *TCPAddr
@@ -243,7 +244,7 @@ func (c *TCPConn) Write(b []byte) (int, error) {
 }
 
 func (c *TCPConn) Close() error {
-	return netdev.Close(c.fd)
+	return c.closer.close(c.fd)
 }
 
 func (c *TCPConn) LocalAddr() Addr {
@@ -368,8 +369,9 @@ type onlyWriter struct {
 }
 
 type listener struct {
-	fd    int
-	laddr *TCPAddr
+	closer closeGuard
+	fd     int
+	laddr  *TCPAddr
 }
 
 func (l *listener) Accept() (Conn, error) {
@@ -387,7 +389,7 @@ func (l *listener) Accept() (Conn, error) {
 }
 
 func (l *listener) Close() error {
-	return netdev.Close(l.fd)
+	return l.closer.close(l.fd)
 }
 
 func (l *listener) Addr() Addr {

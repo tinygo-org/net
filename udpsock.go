@@ -127,6 +127,7 @@ func UDPAddrFromAddrPort(addr netip.AddrPort) *UDPAddr {
 // UDPConn is the implementation of the Conn and PacketConn interfaces
 // for UDP network connections.
 type UDPConn struct {
+	closer        closeGuard
 	fd            int
 	net           string
 	laddr         *UDPAddr
@@ -398,7 +399,7 @@ func (c *UDPConn) WriteMsgUDP(b, oob []byte, addr *UDPAddr) (n, oobn int, err er
 }
 
 func (c *UDPConn) Close() error {
-	return netdev.Close(c.fd)
+	return c.closer.close(c.fd)
 }
 
 func (c *UDPConn) LocalAddr() Addr {
