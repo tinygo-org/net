@@ -360,9 +360,11 @@ func stripHostPort(hostport string) string {
 
 func dialRequest(req *Request, deadline time.Time) (net.Conn, error) {
 	scheme := req.URL.Scheme
-	host := req.Host
+	// Dial Request.URL.Host. Request.Host only overrides the HTTP Host
+	// header (see Request.Write), matching net/http.Transport. See #85.
+	host := req.URL.Host
 	if host == "" {
-		host = req.URL.Host
+		host = req.Host
 	}
 	if !strings.Contains(host, ":") {
 		if scheme == "https" {
