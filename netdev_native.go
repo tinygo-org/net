@@ -208,6 +208,7 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 }
 
 func (*hostNetdev) Close(sockfd int) error {
+	syscall.Shutdown(sockfd, syscall.SHUT_RDWR)
 	return syscall.Close(sockfd)
 }
 

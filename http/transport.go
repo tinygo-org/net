@@ -28,11 +28,8 @@ type readTrackingBody struct {
 	didClose atomic.Bool
 }
 
-// Transport is an HTTP/1.x RoundTripper. TINYGO: in the wasm/browser build the
-// actual round trips are performed by the host fetch API (see roundtrip_js.go);
-// these fields exist only to satisfy configuration by callers such as
-// golang.org/x/net/http2 and google.golang.org/grpc. They are stored but, aside
-// from fetch, have no effect at runtime.
+// Transport implements HTTP/1.x with limited options. Native HTTP requests use
+// Dial, DialContext and TLSClientConfig. See https://pkg.go.dev/net/http#Transport.
 type Transport struct {
 	// Proxy specifies a function to return a proxy for a given Request.
 	//
@@ -93,14 +90,11 @@ type Transport struct {
 
 	// Dial specifies the dial function for creating unencrypted TCP connections.
 	//
-	// Deprecated: Use DialContext instead. TINYGO: stored only; unused by the
-	// fetch-based round tripper.
+	// Deprecated: Use DialContext instead.
 	Dial func(network, addr string) (net.Conn, error)
 
 	// DialContext specifies the dial function for creating unencrypted TCP
-	// connections. TINYGO: honored by callers that dial through the Transport
-	// directly (e.g. the relay WebSocket transport), which is how netbird routes
-	// connections through the netstack in the browser.
+	// connections. The native HTTP transport uses it when it is non-nil.
 	DialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
