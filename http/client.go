@@ -276,11 +276,14 @@ func roundTrip(req *Request) (*Response, error) {
 	// TINYGO: From here on just brute force dial a connection,
 	// TINYGO: send the request, read and return the response.
 	// TINYGO: The connection is closed when resp body is closed.
+	//
+	// Dial Request.URL.Host. Request.Host only overrides the HTTP Host
+	// header (see Request.Write), matching net/http.Transport.
 
 	var conn net.Conn
 	var err error
 
-	host := req.Host
+	host := req.URL.Host
 	missingPort := !strings.Contains(host, ":")
 
 	switch scheme {
