@@ -1,0 +1,58 @@
+name: TinyGo
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: tinygo/tinygo-dev:latest
+    steps:
+      - name: Checkout net
+        uses: actions/checkout@v7
+        with:
+          path: net
+
+      - name: Checkout drivers
+        uses: actions/checkout@v7
+        with:
+          repository: tinygo-org/drivers
+          path: drivers
+
+      - name: Replace TinyGo src/net
+        run: |
+          rm -rf /tinygo/src/net
+          cp -r net /tinygo/src/net
+          tinygo version
+
+      - name: Run package tests
+        run: |
+          tinygo test net
+          tinygo test net/http/internal/ascii
+
+      - name: Build for wasm and wasip1
+        run: |
+          mkdir -p wasmtest
+          cat > wasmtest/main.go <<'EOF'
+          package main
+
+          import (
+          	"net"
+          	"net/http"
+          )
+
+          func main() {
+          	_, _ = net.Dial("tcp", "example.com:80")
+          	_, _ = http.Get("http://example.com")
+          }
+          EOF
+          tinygo build -o wasmtest/js.wasm -target=wasm ./wasmtest/main.go
+          tinygo build -o wasmtest/wasip1.wasm -target=wasip1 ./wasmtest/main.go
+
+      - name: Build drivers net examples
+        working-directory: drivers
+        run: |
+          mkdir -p build
+          grep "examples/net/" smoketest.sh | sh -ex
