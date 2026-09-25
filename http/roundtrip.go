@@ -6,5 +6,5 @@ package http
 
 // RoundTrip implements a RoundTripper over HTTP.
 func (t *Transport) RoundTrip(req *Request) (*Response, error) {
-	return roundTrip(req)
+	return t.roundTrip(req)
 }
