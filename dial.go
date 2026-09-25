@@ -222,8 +222,20 @@ type ListenConfig struct {
 //
 // The ctx argument is used while resolving the address on which to listen;
 // it does not affect the returned Listener.
+// TINYGO: netdev.go has no lookup cancellation or socket control hook.
+// Context is checked before and after lookup. Default socket options apply.
 func (lc *ListenConfig) Listen(ctx context.Context, network, address string) (Listener, error) {
-	return nil, errors.New("dial:ListenConfig:Listen not implemented")
+	if err := lc.checkListenConfig(ctx, true); err != nil {
+		return nil, &OpError{Op: "listen", Net: network, Err: err}
+	}
+	laddr, err := ResolveTCPAddr(network, address)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, &OpError{Op: "listen", Net: network, Addr: laddr, Err: err}
+	}
+	return listenTCP(laddr)
 }
 
 // ListenPacket announces on the local network address.
@@ -233,8 +245,35 @@ func (lc *ListenConfig) Listen(ctx context.Context, network, address string) (Li
 //
 // The ctx argument is used while resolving the address on which to listen;
 // it does not affect the returned PacketConn.
+// TINYGO: netdev.go has no lookup cancellation or socket control hook.
+// Context is checked before and after lookup. Default socket options apply.
 func (lc *ListenConfig) ListenPacket(ctx context.Context, network, address string) (PacketConn, error) {
-	return nil, errors.New("dial:ListenConfig:ListenPacket not implemented")
+	if err := lc.checkListenConfig(ctx, false); err != nil {
+		return nil, &OpError{Op: "listen", Net: network, Err: err}
+	}
+	switch network {
+	case "udp", "udp4":
+	default:
+		return nil, fmt.Errorf("Network %s not supported", network)
+	}
+	laddr, err := ResolveUDPAddr(network, address)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, &OpError{Op: "listen", Net: network, Addr: laddr, Err: err}
+	}
+	return ListenUDP(network, laddr)
+}
+
+func (lc *ListenConfig) checkListenConfig(ctx context.Context, stream bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if lc.Control != nil || stream && (lc.KeepAlive != 0 || lc.KeepAliveConfig.Enable) {
+		return fmt.Errorf("net: ListenConfig socket options: %w", errors.ErrUnsupported)
+	}
+	return nil
 }
 
 func parseNetwork(ctx context.Context, network string, needsProto bool) (afnet string, proto int, err error) {
