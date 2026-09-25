@@ -463,3 +463,11 @@ func (l *TCPListener) AcceptTCP() (*TCPConn, error) {
 func (l *TCPListener) SetDeadline(t time.Time) error {
 	return nil
 }
+
+// SyscallConn returns a raw network connection.
+// This implements the [syscall.Conn] interface. It mirrors the TCPConn stub —
+// TCPListener was missing it, so callers that require syscall.Conn (e.g.
+// github.com/tetratelabs/wazero's socket layer) failed to compile.
+func (l *TCPListener) SyscallConn() (syscall.RawConn, error) {
+	return nil, errors.New("SyscallConn not implemented")
+}
