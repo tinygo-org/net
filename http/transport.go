@@ -151,3 +151,13 @@ var ErrSkipAltProtocol = errors.New("net/http: skip alternate protocol")
 // wasm build performs round trips via the host fetch API and does not dispatch
 // on registered alternate protocols.
 func (t *Transport) RegisterProtocol(scheme string, rt RoundTripper) {}
+
+// httpTimeoutError represents a timeout.
+// It implements net.Error and wraps context.DeadlineExceeded.
+type timeoutError struct {
+	err string
+}
+
+func (e *timeoutError) Error() string { return e.err }
+
+func nop() {}
