@@ -293,7 +293,9 @@ func roundTrip(req *Request) (*Response, error) {
 		if missingPort {
 			host = host + ":443"
 		}
-		conn, err = tls.Dial("tcp", host, nil)
+		// TINYGO: defaultTLSConfig is nil everywhere but darwin, where it
+		// TINYGO: carries the trust roots crypto/x509 cannot find for itself.
+		conn, err = tls.Dial("tcp", host, defaultTLSConfig())
 	}
 	if err != nil {
 		req.closeBody()
