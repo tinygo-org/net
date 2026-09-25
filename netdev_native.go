@@ -137,14 +137,29 @@ func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
 	if err != nil {
 		return -1, netip.AddrPort{}, err
 	}
-	var raddr netip.AddrPort
+	return nfd, addrPortFromSockaddr(sa), nil
+}
+
+// addrPortFromSockaddr converts a syscall.Sockaddr, as returned by
+// Accept/Getsockname, into a netip.AddrPort.
+func addrPortFromSockaddr(sa syscall.Sockaddr) netip.AddrPort {
 	switch s := sa.(type) {
 	case *syscall.SockaddrInet4:
-		raddr = netip.AddrPortFrom(netip.AddrFrom4(s.Addr), uint16(s.Port))
+		return netip.AddrPortFrom(netip.AddrFrom4(s.Addr), uint16(s.Port))
 	case *syscall.SockaddrInet6:
-		raddr = netip.AddrPortFrom(netip.AddrFrom16(s.Addr), uint16(s.Port))
+		return netip.AddrPortFrom(netip.AddrFrom16(s.Addr), uint16(s.Port))
 	}
-	return nfd, raddr, nil
+	return netip.AddrPort{}
+}
+
+// GetSockname reports the bound address.
+// See https://pkg.go.dev/syscall#Getsockname.
+func (*hostNetdev) GetSockname(sockfd int) (netip.AddrPort, error) {
+	sa, err := syscall.Getsockname(sockfd)
+	if err != nil {
+		return netip.AddrPort{}, err
+	}
+	return addrPortFromSockaddr(sa), nil
 }
 
 func (*hostNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
