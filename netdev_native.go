@@ -379,13 +379,25 @@ const (
 // dnsLookup resolves name by querying the system nameservers over UDP,
 // preferring an IPv4 (A) answer and falling back to IPv6 (AAAA).
 func dnsLookup(name string) (netip.Addr, error) {
-	if addr, err := dnsLookupType(name, dnsTypeA); err == nil {
+	addr, errA := dnsLookupType(name, dnsTypeA)
+	if errA == nil {
 		return addr, nil
 	}
-	if addr, err := dnsLookupType(name, dnsTypeAAAA); err == nil {
+	addr, errAAAA := dnsLookupType(name, dnsTypeAAAA)
+	if errAAAA == nil {
 		return addr, nil
 	}
-	return netip.Addr{}, &DNSError{Err: "no address found", Name: name}
+	// A name that the servers answered NXDOMAIN for is a different condition
+	// from a name that they did not answer at all.
+	notFound := isNotFoundErr(errA) && isNotFoundErr(errAAAA)
+	return netip.Addr{}, &DNSError{Err: "no address found", Name: name, IsNotFound: notFound}
+}
+
+// isNotFoundErr reports whether err is a DNSError for a name or a record type
+// that does not exist.
+func isNotFoundErr(err error) bool {
+	dnsErr, ok := err.(*DNSError)
+	return ok && dnsErr.IsNotFound
 }
 
 // dnsLookupType resolves name for a single DNS record type (A or AAAA).
