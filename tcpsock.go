@@ -463,3 +463,11 @@ func (l *TCPListener) AcceptTCP() (*TCPConn, error) {
 func (l *TCPListener) SetDeadline(t time.Time) error {
 	return nil
 }
+
+// SyscallConn returns a raw network connection.
+// This implements the [syscall.Conn] interface.
+//
+// TINYGO: mirrors the TCPConn stub. wazero's socket layer requires it.
+func (l *TCPListener) SyscallConn() (syscall.RawConn, error) {
+	return nil, errors.New("SyscallConn not implemented")
+}

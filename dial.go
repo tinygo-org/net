@@ -94,6 +94,18 @@ type Dialer struct {
 	// netdev-backed ResolveTCPAddr/ResolveUDPAddr and does not consult this
 	// field.
 	Resolver *Resolver
+
+	// Control, if not nil, is called after creating the network connection but
+	// before actually dialing.
+	//
+	// TINYGO: present for API compatibility. The netdev dial exposes no raw
+	// syscall.RawConn, so this is never invoked.
+	Control func(network, address string, c syscall.RawConn) error
+
+	// ControlContext is like Control but additionally receives the context.
+	//
+	// TINYGO: present for API compatibility. Not invoked, see Control.
+	ControlContext func(ctx context.Context, network, address string, c syscall.RawConn) error
 }
 
 // Dial connects to the address on the named network.
