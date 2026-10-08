@@ -90,6 +90,10 @@ func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 
 	// TINYGO: Use netdev resolver
 
+	// An empty address is the unspecified address and any port, as in Go.
+	if address == "" {
+		return &UDPAddr{}, nil
+	}
 	host, sport, err := SplitHostPort(address)
 	if err != nil {
 		return nil, err
