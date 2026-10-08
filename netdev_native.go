@@ -198,7 +198,8 @@ func (*hostNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (
 		if expired(deadline) {
 			return total, timeoutError{}
 		}
-		n, err := syscall.Write(sockfd, buf[total:])
+		// MSG_NOSIGNAL turns a write to a closed peer into EPIPE, not SIGPIPE.
+		n, err := syscall.SendmsgN(sockfd, buf[total:], nil, nil, syscall.MSG_NOSIGNAL)
 		if err != nil {
 			if err == syscall.EINTR {
 				continue
