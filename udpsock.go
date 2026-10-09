@@ -172,9 +172,13 @@ func DialUDP(network string, laddr, raddr *UDPAddr) (*UDPConn, error) {
 		raddr = &UDPAddr{}
 	}
 
-	if raddr.IP.IsUnspecified() {
-		return nil, fmt.Errorf("Sorry, localhost isn't available on Tinygo")
-	} else if len(raddr.IP) != 4 && len(raddr.IP) != 16 {
+	// As in Go, a nil or unspecified IP dials the local system.
+	if len(raddr.IP) == 0 || raddr.IP.IsUnspecified() {
+		local := *raddr
+		local.IP = loopbackFor(raddr.IP)
+		raddr = &local
+	}
+	if len(raddr.IP) != 4 && len(raddr.IP) != 16 {
 		return nil, fmt.Errorf("invalid IP address")
 	}
 

@@ -173,9 +173,13 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 		raddr = &TCPAddr{}
 	}
 
-	if raddr.IP.IsUnspecified() {
-		return nil, errors.New("Sorry, localhost isn't available on Tinygo")
-	} else if len(raddr.IP) != 4 && len(raddr.IP) != 16 {
+	// As in Go, a nil or unspecified IP dials the local system.
+	if len(raddr.IP) == 0 || raddr.IP.IsUnspecified() {
+		local := *raddr
+		local.IP = loopbackFor(raddr.IP)
+		raddr = &local
+	}
+	if len(raddr.IP) != 4 && len(raddr.IP) != 16 {
 		return nil, errors.New("invalid IP address")
 	}
 
