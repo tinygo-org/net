@@ -13,6 +13,7 @@ package http
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"net/http/internal/ascii"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http/httpguts"
@@ -208,15 +210,22 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 		req.Header.Set("Authorization", "Basic "+basicAuth(username, password))
 	}
 
-	resp, err = roundTrip(req)
+	clientDeadline := deadline
+	if d, ok := req.Context().Deadline(); ok {
+		deadline = earliestDeadline(deadline, d)
+	}
+
+	resp, err = roundTrip(req, deadline)
 	if err != nil {
 
 		// TINYGO: Remove TLS error check
 
 		// didTimeout must be non-nil whenever err != nil: c.do calls
-		// didTimeout() on the error path. The named return is nil here (TinyGo
-		// dropped setRequestCancel), so return alwaysFalse instead to avoid a
-		// nil func-value dereference on a failed dial.
+		// didTimeout() on the error path. Report a Client.Timeout hit only
+		// when that deadline was set and the I/O actually timed out.
+		if !clientDeadline.IsZero() && (errTimedOut(err) || !time.Now().Before(clientDeadline)) {
+			return nil, func() bool { return true }, err
+		}
 		return nil, alwaysFalse, err
 	}
 	if resp == nil {
@@ -228,7 +237,7 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 	return resp, nil, nil
 }
 
-func roundTrip(req *Request) (*Response, error) {
+func roundTrip(req *Request, deadline time.Time) (*Response, error) {
 
 	// TINYGO: This is an approximation of Transport.roudTrip()
 
@@ -277,45 +286,144 @@ func roundTrip(req *Request) (*Response, error) {
 	// TINYGO: send the request, read and return the response.
 	// TINYGO: The connection is closed when resp body is closed.
 
-	var conn net.Conn
-	var err error
-
-	host := req.Host
-	missingPort := !strings.Contains(host, ":")
-
-	switch scheme {
-	case "http":
-		if missingPort {
-			host = host + ":80"
-		}
-		conn, err = net.Dial("tcp", host)
-	case "https":
-		if missingPort {
-			host = host + ":443"
-		}
-		conn, err = tls.Dial("tcp", host, nil)
-	}
+	conn, err := dialRequest(req, deadline)
 	if err != nil {
 		req.closeBody()
 		return nil, err
 	}
 
-	// TINYGO: TODO handle timeouts
+	stopWatch := watchConnContext(req.Context(), conn)
+	closeConn := func() {
+		stopWatch()
+		conn.Close()
+	}
+
+	if !deadline.IsZero() {
+		if err := conn.SetDeadline(deadline); err != nil {
+			closeConn()
+			req.closeBody()
+			return nil, err
+		}
+	}
 
 	writer := bufio.NewWriter(conn)
 	if err = req.Write(writer); err != nil {
+		closeConn()
 		req.closeBody()
 		return nil, err
 	}
 	req.closeBody()
 	if err = writer.Flush(); err != nil {
+		closeConn()
 		return nil, err
 	}
 
-	req.onEOF = func() { conn.Close() }
+	req.onEOF = closeConn
 
 	reader := bufio.NewReader(conn)
-	return ReadResponse(reader, req)
+	resp, err := ReadResponse(reader, req)
+	if err != nil {
+		closeConn()
+		return nil, err
+	}
+	return resp, nil
+}
+
+func earliestDeadline(a, b time.Time) time.Time {
+	if a.IsZero() {
+		return b
+	}
+	if b.IsZero() || a.Before(b) {
+		return a
+	}
+	return b
+}
+
+func errTimedOut(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+func stripHostPort(hostport string) string {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return hostport
+	}
+	return host
+}
+
+func dialRequest(req *Request, deadline time.Time) (net.Conn, error) {
+	scheme := req.URL.Scheme
+	// Dial Request.URL.Host. Request.Host only overrides the HTTP Host
+	// header (see Request.Write), matching net/http.Transport. See #85.
+	host := req.URL.Host
+	if host == "" {
+		host = req.Host
+	}
+	if !strings.Contains(host, ":") {
+		if scheme == "https" {
+			host += ":443"
+		} else {
+			host += ":80"
+		}
+	}
+
+	d := net.Dialer{}
+	if !deadline.IsZero() {
+		d.Deadline = deadline
+		if remaining := time.Until(deadline); remaining > 0 {
+			d.Timeout = remaining
+		}
+	}
+	ctx := req.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	raw, err := d.DialContext(ctx, "tcp", host)
+	if err != nil {
+		return nil, err
+	}
+	if scheme != "https" {
+		return raw, nil
+	}
+	if !deadline.IsZero() {
+		_ = raw.SetDeadline(deadline)
+	}
+	tconn := tls.Client(raw, &tls.Config{ServerName: stripHostPort(host)})
+	if err := tconn.Handshake(); err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return tconn, nil
+}
+
+// watchConnContext closes conn when ctx is cancelled. The returned
+// function stops the waiter so a successful request does not leak the
+// goroutine after the body is consumed.
+func watchConnContext(ctx context.Context, conn net.Conn) func() {
+	if ctx == nil {
+		return func() {}
+	}
+	done := ctx.Done()
+	if done == nil {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		select {
+		case <-done:
+			conn.Close()
+		case <-stop:
+		}
+	}()
+	return func() { once.Do(func() { close(stop) }) }
 }
 
 // See 2 (end of page 4) https://www.ietf.org/rfc/rfc2617.txt
