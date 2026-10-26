@@ -13,6 +13,7 @@ package http
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"net/http/internal/ascii"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http/httpguts"
@@ -158,7 +160,11 @@ func (c *Client) send(req *Request, deadline time.Time) (resp *Response, didTime
 			req.AddCookie(cookie)
 		}
 	}
-	resp, didTimeout, err = send(req, deadline)
+	rt := c.Transport
+	if rt == nil {
+		rt = DefaultTransport
+	}
+	resp, didTimeout, err = send(req, rt, deadline)
 	if err != nil {
 		return nil, didTimeout, err
 	}
@@ -179,9 +185,12 @@ func (c *Client) deadline() time.Time {
 
 // send issues an HTTP request.
 // Caller should close resp.Body when done reading from it.
-func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
+func send(req *Request, rt RoundTripper, deadline time.Time) (resp *Response, didTimeout func() bool, err error) {
 
-	// TINYGO: Removed round tripper
+	if rt == nil {
+		req.closeBody()
+		return nil, alwaysFalse, errors.New("http: no Client.Transport or DefaultTransport")
+	}
 
 	if req.URL == nil {
 		req.closeBody()
@@ -208,27 +217,42 @@ func send(req *Request, deadline time.Time) (resp *Response, didTimeout func() b
 		req.Header.Set("Authorization", "Basic "+basicAuth(username, password))
 	}
 
-	resp, err = roundTrip(req)
+	stop := func() {}
+	ctx := req.Context()
+	if !deadline.IsZero() {
+		ctx, stop = context.WithDeadline(ctx, deadline)
+		req = req.WithContext(ctx)
+	}
+	didTimeout = func() bool { return ctx.Err() == context.DeadlineExceeded }
+	if err = ctx.Err(); err != nil {
+		stop()
+		req.closeBody()
+		return nil, didTimeout, err
+	}
+	resp, err = rt.RoundTrip(req)
 	if err != nil {
-
-		// TINYGO: Remove TLS error check
-
-		// didTimeout must be non-nil whenever err != nil: c.do calls
-		// didTimeout() on the error path. The named return is nil here (TinyGo
-		// dropped setRequestCancel), so return alwaysFalse instead to avoid a
-		// nil func-value dereference on a failed dial.
-		return nil, alwaysFalse, err
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		stop()
+		return nil, didTimeout, err
 	}
 	if resp == nil {
-		return nil, alwaysFalse, fmt.Errorf("http: sendit returned a nil *Response with a nil error")
+		stop()
+		return nil, alwaysFalse, errors.New("http: RoundTripper returned a nil response with a nil error")
 	}
-
-	// TINYGO: Skip check for resp.Body == nil since we'll set it in roundTrip
-
+	if resp.Body == nil {
+		if resp.ContentLength > 0 && req.Method != "HEAD" {
+			stop()
+			return nil, alwaysFalse, errors.New("http: RoundTripper returned a nil body")
+		}
+		resp.Body = NoBody
+	}
+	resp.Body = &cancelBody{ReadCloser: resp.Body, ctx: ctx, stop: stop}
 	return resp, nil, nil
 }
 
-func roundTrip(req *Request) (*Response, error) {
+func (t *Transport) roundTrip(req *Request) (resp *Response, err error) {
 
 	// TINYGO: This is an approximation of Transport.roudTrip()
 
@@ -273,38 +297,84 @@ func roundTrip(req *Request) (*Response, error) {
 		return nil, errors.New("http: no Host in request URL")
 	}
 
-	// TINYGO: From here on just brute force dial a connection,
-	// TINYGO: send the request, read and return the response.
-	// TINYGO: The connection is closed when resp body is closed.
-
-	var conn net.Conn
-	var err error
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	if req.Body != nil {
+		req.Body = &onceCloseBody{ReadCloser: req.Body}
+	}
+	if req.Cancel != nil {
+		select {
+		case <-req.Cancel:
+			cancel()
+		default:
+		}
+		go func() {
+			select {
+			case <-req.Cancel:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
+	defer func() {
+		if err != nil {
+			req.closeBody()
+			cancel()
+		}
+	}()
 
 	host := req.Host
 	missingPort := !strings.Contains(host, ":")
-
-	switch scheme {
-	case "http":
-		if missingPort {
-			host = host + ":80"
+	if missingPort {
+		if scheme == "http" {
+			host += ":80"
+		} else {
+			host += ":443"
 		}
-		conn, err = net.Dial("tcp", host)
-	case "https":
-		if missingPort {
-			host = host + ":443"
-		}
-		conn, err = tls.Dial("tcp", host, nil)
 	}
+	conn, err := dialRequest(ctx, func() (net.Conn, error) {
+		if scheme == "https" {
+			d := tls.Dialer{Config: t.TLSClientConfig}
+			return d.DialContext(ctx, "tcp", host)
+		}
+		if t.DialContext != nil {
+			return t.DialContext(ctx, "tcp", host)
+		}
+		if t.Dial != nil {
+			return t.Dial("tcp", host)
+		}
+		return (&net.Dialer{}).DialContext(ctx, "tcp", host)
+	})
 	if err != nil {
-		req.closeBody()
 		return nil, err
 	}
 
-	// TINYGO: TODO handle timeouts
+	closeConn := sync.OnceFunc(func() { conn.Close() })
+	done := make(chan struct{})
+	stop := sync.OnceFunc(func() {
+		close(done)
+		closeConn()
+		cancel()
+	})
+	go func() {
+		select {
+		case <-ctx.Done():
+			closeConn()
+			req.closeBody()
+		case <-done:
+		}
+	}()
+	defer func() {
+		if err != nil {
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			stop()
+		}
+	}()
 
 	writer := bufio.NewWriter(conn)
 	if err = req.Write(writer); err != nil {
-		req.closeBody()
 		return nil, err
 	}
 	req.closeBody()
@@ -312,10 +382,20 @@ func roundTrip(req *Request) (*Response, error) {
 		return nil, err
 	}
 
-	req.onEOF = func() { conn.Close() }
-
-	reader := bufio.NewReader(conn)
-	return ReadResponse(reader, req)
+	req.onEOF = closeConn
+	resp, err = ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	if resp.Body == NoBody {
+		stop()
+	} else {
+		resp.Body = &cancelBody{ReadCloser: resp.Body, ctx: ctx, stop: stop}
+	}
+	return resp, nil
 }
 
 // See 2 (end of page 4) https://www.ietf.org/rfc/rfc2617.txt
@@ -440,10 +520,6 @@ func urlErrorOp(method string) string {
 // Any returned error will be of type [*url.Error]. The url.Error
 // value's Timeout method will report true if the request timed out.
 func (c *Client) Do(req *Request) (*Response, error) {
-	if c.Transport != nil {
-		return c.Transport.RoundTrip(req)
-	}
-
 	return c.do(req)
 }
 
@@ -458,19 +534,14 @@ func (c *Client) do(req *Request) (retres *Response, reterr error) {
 	_ = *c // panic early if c is nil; see go.dev/issue/53521
 
 	var err error
-	var didTimeout func() bool
 	var resp *Response
 	var deadline = c.deadline()
 
 	// TINYGO: lots removed here, mostly handling multiple requests.
 	// TINYGO: we just want simple GET, POST, etc.  In and out.
 
-	if resp, didTimeout, err = c.send(req, deadline); err != nil {
-		// c.send() always closes req.Body
-		if !deadline.IsZero() && didTimeout() {
-			return nil, fmt.Errorf("%s (Client.Timeout exceeded while awaiting headers)", err.Error())
-		}
-		return nil, err
+	if resp, _, err = c.send(req, deadline); err != nil {
+		return nil, &url.Error{Op: urlErrorOp(req.Method), URL: req.URL.String(), Err: err}
 	}
 
 	return resp, nil
