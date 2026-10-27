@@ -174,3 +174,64 @@ func TestCloseBlockedWrite(t *testing.T) {
 		t.Fatal("Write did not stop after close")
 	}
 }
+
+// Close lands after a call saw EAGAIN but before it parked on the poller.
+func TestCloseBeforeWait(t *testing.T) {
+	pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(pair[1])
+	fd := pair[0]
+	if err := syscall.SetNonblock(fd, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := poller.acquire(fd); err != nil {
+		t.Fatal(err)
+	}
+	if err := netdev.Close(fd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := syscall.Getsockname(fd); err != nil {
+		t.Fatalf("fd closed while a call still holds it: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- poller.wait(fd, false, time.Time{}) }()
+	select {
+	case err := <-done:
+		if err != errPollClosed {
+			t.Fatalf("wait = %v, want errPollClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("wait parked after close")
+	}
+	poller.release(fd)
+	if _, err := syscall.Getsockname(fd); err != syscall.EBADF {
+		t.Fatalf("fd still open after the last call released it: %v", err)
+	}
+}
+
+func TestDeadlineInterruptsRead(t *testing.T) {
+	pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Close(pair[1])
+	if err := syscall.SetNonblock(pair[0], true); err != nil {
+		t.Fatal(err)
+	}
+	c := &TCPConn{fd: pair[0], net: "tcp"}
+	defer c.Close()
+	done := make(chan error, 1)
+	go func() { _, err := c.Read(make([]byte, 1)); done <- err }()
+	time.Sleep(25 * time.Millisecond)
+	c.SetReadDeadline(time.Now())
+	select {
+	case err := <-done:
+		if !errors.As(err, new(timeoutError)) {
+			t.Fatalf("Read = %v, want a timeout", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Read did not see the new deadline")
+	}
+}

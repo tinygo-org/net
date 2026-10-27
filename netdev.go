@@ -32,7 +32,6 @@ const (
 // explicitly set with useNetdev().
 var netdev netdever = &nopNetdev{}
 
-// (useNetdev is go:linkname'd from tinygo/drivers package)
 // errPollInterrupted is returned from Recv and Send when a deadline change
 // interrupted a blocked operation. The net package retries with the new one.
 var errPollInterrupted = errors.New("net: I/O interrupted by deadline change")
@@ -45,6 +44,7 @@ func pollInterrupt(sockfd int, write bool) {
 	}
 }
 
+// (useNetdev is go:linkname'd from tinygo/drivers package)
 func useNetdev(dev netdever) {
 	netdev = dev
 }

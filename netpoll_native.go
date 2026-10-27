@@ -12,47 +12,105 @@ import (
 	"time"
 )
 
-// errPollClosed is returned to goroutines parked on an fd when that fd is closed.
 var errPollClosed = errors.New("net: use of closed network connection")
 
-// pollDesc holds the goroutines currently waiting on one fd, split by direction.
 type pollDesc struct {
-	fd      int
 	readers []chan error
 	writers []chan error
 	inEpoll bool
 
-	// Records an interrupt that arrived with no waiter parked, so the next
-	// wait in that direction returns at once instead of using a stale deadline.
+	// An interrupt that found no parked waiter, so the next wait returns at once.
 	readInterrupt  bool
 	writeInterrupt bool
+
+	// Calls in progress on the fd. Close defers close(2) until this drops to 0,
+	// so the fd number cannot be reused while a call may still wait on it.
+	refs    int
+	closing bool
 }
 
 type netPoller struct {
-	once sync.Once
-	err  error // set if the poller failed to initialize
-	epfd int
-
-	mu  sync.Mutex
-	fds map[int]*pollDesc
+	mu      sync.Mutex
+	started bool
+	err     error
+	epfd    int
+	fds     map[int]*pollDesc
 }
 
 var poller netPoller
 
-func (p *netPoller) init() {
-	p.once.Do(func() {
-		epfd, err := syscall.EpollCreate1(syscall.EPOLL_CLOEXEC)
-		if err != nil {
-			p.err = err
-			return
+// start creates the epoll instance on first use. Must be called with p.mu held.
+func (p *netPoller) start() error {
+	if !p.started {
+		p.started = true
+		p.epfd, p.err = syscall.EpollCreate1(syscall.EPOLL_CLOEXEC)
+		if p.err == nil {
+			go p.loop(p.epfd)
 		}
-		p.epfd = epfd
-		p.fds = make(map[int]*pollDesc)
-		go p.loop()
-	})
+	}
+	return p.err
 }
 
-// events returns the epoll interest mask for pd given its current waiters.
+// acquire registers a call on fd. It fails once Close has run.
+func (p *netPoller) acquire(fd int) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.fds == nil {
+		p.fds = make(map[int]*pollDesc)
+	}
+	pd := p.fds[fd]
+	if pd == nil {
+		pd = &pollDesc{}
+		p.fds[fd] = pd
+	}
+	if pd.closing {
+		return errPollClosed
+	}
+	pd.refs++
+	return nil
+}
+
+// release ends a call started with acquire, and closes fd if it was the last
+// call after Close.
+func (p *netPoller) release(fd int) {
+	p.mu.Lock()
+	pd := p.fds[fd]
+	pd.refs--
+	if pd.refs > 0 {
+		p.mu.Unlock()
+		return
+	}
+	closing := pd.closing
+	delete(p.fds, fd)
+	p.mu.Unlock()
+	if closing {
+		syscall.Close(fd)
+	}
+}
+
+// close wakes every waiter on fd with errPollClosed and closes fd, at once if
+// no call is in progress and otherwise when the last one releases it.
+func (p *netPoller) close(fd int) error {
+	p.mu.Lock()
+	pd := p.fds[fd]
+	if pd == nil {
+		p.mu.Unlock()
+		return syscall.Close(fd)
+	}
+	pd.closing = true
+	if pd.inEpoll {
+		syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_DEL, fd, nil)
+		pd.inEpoll = false
+	}
+	chs := append(pd.readers, pd.writers...)
+	pd.readers, pd.writers = nil, nil
+	p.mu.Unlock()
+	for _, ch := range chs {
+		ch <- errPollClosed
+	}
+	return nil
+}
+
 func (pd *pollDesc) events() uint32 {
 	var ev uint32
 	if len(pd.readers) != 0 {
@@ -67,71 +125,71 @@ func (pd *pollDesc) events() uint32 {
 	return ev
 }
 
-// arm (re)programs epoll for pd. Must be called with p.mu held.
-func (p *netPoller) arm(pd *pollDesc) {
+// arm programs epoll for the waiters on fd. If that fails, it wakes them with
+// the error. Must be called with p.mu held.
+func (p *netPoller) arm(fd int, pd *pollDesc) {
 	ev := pd.events()
 	if ev == 0 {
 		if pd.inEpoll {
-			syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_DEL, pd.fd, nil)
+			syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_DEL, fd, nil)
 			pd.inEpoll = false
-		}
-		if !pd.readInterrupt && !pd.writeInterrupt {
-			delete(p.fds, pd.fd)
 		}
 		return
 	}
-	event := &syscall.EpollEvent{Events: ev, Fd: int32(pd.fd)}
+	op := syscall.EPOLL_CTL_ADD
 	if pd.inEpoll {
-		syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_MOD, pd.fd, event)
-	} else {
-		if err := syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_ADD, pd.fd, event); err == nil {
-			pd.inEpoll = true
-		}
+		op = syscall.EPOLL_CTL_MOD
+	}
+	err := syscall.EpollCtl(p.epfd, op, fd, &syscall.EpollEvent{Events: ev, Fd: int32(fd)})
+	if err == nil {
+		pd.inEpoll = true
+		return
+	}
+	chs := append(pd.readers, pd.writers...)
+	pd.readers, pd.writers = nil, nil
+	for _, ch := range chs {
+		ch <- err
 	}
 }
 
-// wait blocks until fd is ready in the requested direction (write=EPOLLOUT,
-// otherwise EPOLLIN), the deadline expires, or the fd is closed.
+// wait blocks until fd is ready for writing (write) or reading, the deadline
+// passes, or fd is closed. The caller must hold a reference from acquire.
 func (p *netPoller) wait(fd int, write bool, deadline time.Time) error {
-	p.init()
-	if p.err != nil {
-		return p.err
-	}
-
 	ch := make(chan error, 1)
 
 	p.mu.Lock()
-	pd := p.fds[fd]
-	if pd == nil {
-		pd = &pollDesc{fd: fd}
-		p.fds[fd] = pd
-	}
-	if (write && pd.writeInterrupt) || (!write && pd.readInterrupt) {
-		// An interrupt arrived before we parked. Consume it and let the caller
-		// re-evaluate its deadline.
-		if write {
-			pd.writeInterrupt = false
-		} else {
-			pd.readInterrupt = false
-		}
-		p.arm(pd)
+	if err := p.start(); err != nil {
 		p.mu.Unlock()
-		return errPollInterrupted
+		return err
+	}
+	pd := p.fds[fd]
+	if pd.closing {
+		p.mu.Unlock()
+		return errPollClosed
 	}
 	if write {
+		if pd.writeInterrupt {
+			pd.writeInterrupt = false
+			p.mu.Unlock()
+			return errPollInterrupted
+		}
 		pd.writers = append(pd.writers, ch)
 	} else {
+		if pd.readInterrupt {
+			pd.readInterrupt = false
+			p.mu.Unlock()
+			return errPollInterrupted
+		}
 		pd.readers = append(pd.readers, ch)
 	}
-	p.arm(pd)
+	p.arm(fd, pd)
 	p.mu.Unlock()
 
 	var timeout <-chan time.Time
 	if !deadline.IsZero() {
 		d := time.Until(deadline)
 		if d <= 0 {
-			p.cancelWaiter(fd, write, ch)
-			return timeoutError{}
+			return p.cancelWaiter(fd, write, ch)
 		}
 		t := time.NewTimer(d)
 		defer t.Stop()
@@ -142,130 +200,87 @@ func (p *netPoller) wait(fd int, write bool, deadline time.Time) error {
 	case err := <-ch:
 		return err
 	case <-timeout:
-		p.cancelWaiter(fd, write, ch)
-		return timeoutError{}
+		return p.cancelWaiter(fd, write, ch)
 	}
 }
 
-// cancelWaiter removes a single waiter channel that gave up (deadline expired)
-// before the poller signalled it.
-func (p *netPoller) cancelWaiter(fd int, write bool, ch chan error) {
+// cancelWaiter removes a waiter whose deadline passed. If it was woken in the
+// meantime, that result wins over the timeout.
+func (p *netPoller) cancelWaiter(fd int, write bool, ch chan error) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	pd := p.fds[fd]
-	if pd == nil {
-		return
-	}
 	if write {
 		pd.writers = removeChan(pd.writers, ch)
 	} else {
 		pd.readers = removeChan(pd.readers, ch)
 	}
-	p.arm(pd)
+	p.arm(fd, pd)
+	p.mu.Unlock()
+	select {
+	case err := <-ch:
+		return err
+	default:
+		return timeoutError{}
+	}
 }
 
-// interrupt wakes every goroutine parked on fd in the given direction so it
-// re-evaluates its deadline. net/http's abortPendingRead relies on this.
+// interrupt wakes the goroutines parked on fd in one direction so they pick up
+// a new deadline. net/http's abortPendingRead relies on this.
 func (p *netPoller) interrupt(fd int, write bool) {
-	if p.err != nil {
-		return
-	}
 	p.mu.Lock()
-	if p.fds == nil {
-		// The poller never started, so nothing can be parked. Any later
-		// wait() captures the new deadline anyway.
+	pd := p.fds[fd]
+	if pd == nil || pd.refs == 0 {
 		p.mu.Unlock()
 		return
-	}
-	pd := p.fds[fd]
-	if pd == nil {
-		pd = &pollDesc{fd: fd}
-		p.fds[fd] = pd
 	}
 	var chs []chan error
 	if write {
 		chs, pd.writers = pd.writers, nil
-		if len(chs) == 0 {
-			pd.writeInterrupt = true
-		}
+		pd.writeInterrupt = len(chs) == 0
 	} else {
 		chs, pd.readers = pd.readers, nil
-		if len(chs) == 0 {
-			pd.readInterrupt = true
-		}
+		pd.readInterrupt = len(chs) == 0
 	}
-	p.arm(pd)
+	p.arm(fd, pd)
 	p.mu.Unlock()
-
 	for _, ch := range chs {
 		ch <- errPollInterrupted
 	}
 }
 
-// close wakes every goroutine parked on fd with errPollClosed and stops polling
-// it. It must be called just before the fd is actually closed.
-func (p *netPoller) close(fd int) {
-	if p.err != nil {
-		return
-	}
-	p.mu.Lock()
-	pd := p.fds[fd]
-	if pd == nil {
-		p.mu.Unlock()
-		return
-	}
-	if pd.inEpoll {
-		syscall.EpollCtl(p.epfd, syscall.EPOLL_CTL_DEL, fd, nil)
-	}
-	delete(p.fds, fd)
-	readers, writers := pd.readers, pd.writers
-	pd.readers, pd.writers = nil, nil
-	p.mu.Unlock()
-
-	for _, ch := range readers {
-		ch <- errPollClosed
-	}
-	for _, ch := range writers {
-		ch <- errPollClosed
-	}
-}
-
-// loop is the poller's background goroutine. It waits for epoll events
-// and wakes the corresponding parked goroutines.
-func (p *netPoller) loop() {
+func (p *netPoller) loop(epfd int) {
 	events := make([]syscall.EpollEvent, 64)
 	for {
-		n, err := syscall.EpollWait(p.epfd, events, -1)
+		n, err := syscall.EpollWait(epfd, events, pollWaitMsec)
+		if err == syscall.EINTR {
+			continue
+		}
 		if err != nil {
-			if err == syscall.EINTR {
-				continue
-			}
 			return
 		}
+		if n == 0 {
+			time.Sleep(pollIdle)
+			continue
+		}
 		p.mu.Lock()
-		for i := 0; i < n; i++ {
-			e := events[i]
+		for _, e := range events[:n] {
 			pd := p.fds[int(e.Fd)]
 			if pd == nil {
 				continue
 			}
-			// On error/hangup, wake everyone so they observe the real result.
+			// On an error or hangup, wake everyone so they see the real result.
 			hup := e.Events&(syscall.EPOLLERR|syscall.EPOLLHUP|syscall.EPOLLRDHUP) != 0
+			var chs []chan error
 			if hup || e.Events&syscall.EPOLLIN != 0 {
-				for _, ch := range pd.readers {
-					ch <- nil
-				}
-				pd.readers = nil
+				chs, pd.readers = append(chs, pd.readers...), nil
 			}
 			if hup || e.Events&syscall.EPOLLOUT != 0 {
-				for _, ch := range pd.writers {
-					ch <- nil
-				}
-				pd.writers = nil
+				chs, pd.writers = append(chs, pd.writers...), nil
 			}
-			// EPOLLONESHOT disabled the fd, so re-arm for any remaining waiters.
-			pd.inEpoll = true // it is still registered, just disarmed
-			p.arm(pd)
+			for _, ch := range chs {
+				ch <- nil
+			}
+			p.arm(int(e.Fd), pd)
 		}
 		p.mu.Unlock()
 	}

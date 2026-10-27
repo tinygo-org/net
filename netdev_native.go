@@ -34,11 +34,8 @@ func init() {
 // hostNetdev implements netdever using raw Linux sockets via the syscall
 // package. The "sockfd" values it returns are plain OS file descriptors.
 //
-// Deadlines are implemented with the per-socket SO_RCVTIMEO/SO_SNDTIMEO
-// options rather than a runtime poller. As a consequence, issuing concurrent
-// reads (or concurrent writes) with different deadlines on the same connection
-// is not supported; this matches the typical net.Conn usage of one reader and
-// one writer goroutine.
+// Sockets are non-blocking. A call that would block parks on the poller in
+// netpoll_native.go until the fd is ready, its deadline passes, or it closes.
 type hostNetdev struct{}
 
 // timeoutError is returned from Send/Recv when a deadline expires. It satisfies
@@ -90,8 +87,6 @@ func (*hostNetdev) Socket(domain, stype, protocol int) (int, error) {
 		protocol = syscall.IPPROTO_TCP
 	}
 
-	// Non-blocking so the poller (netpoll_native.go) can park goroutines on
-	// EAGAIN instead of pinning a thread in a blocking syscall.
 	fd, err := syscall.Socket(domain, stype|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC, protocol)
 	if err != nil {
 		return -1, err
@@ -121,6 +116,10 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 		addr = resolved
 	}
 	sa := sockaddrFromParts(addr, ip.Port())
+	if err := poller.acquire(sockfd); err != nil {
+		return err
+	}
+	defer poller.release(sockfd)
 	for {
 		err := syscall.Connect(sockfd, sa)
 		switch err {
@@ -129,8 +128,8 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 		case syscall.EINTR:
 			continue
 		case syscall.EINPROGRESS, syscall.EALREADY, syscall.EAGAIN:
-			// A non-blocking connect is in progress. Wait for the socket to
-			// become writable, then read the pending error via SO_ERROR.
+			// The connect finishes when the socket becomes writable, and
+			// SO_ERROR holds its result.
 			if werr := poller.wait(sockfd, true, time.Time{}); werr != nil {
 				return werr
 			}
@@ -148,8 +147,8 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 	}
 }
 
-// PollInterrupt wakes any goroutine parked in Recv or Send on sockfd so it
-// re-evaluates its deadline.
+// PollInterrupt wakes the goroutines parked in Recv or Send on sockfd so they
+// pick up a new deadline.
 func (*hostNetdev) PollInterrupt(sockfd int, write bool) {
 	poller.interrupt(sockfd, write)
 }
@@ -159,17 +158,17 @@ func (*hostNetdev) Listen(sockfd int, backlog int) error {
 }
 
 func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
+	if err := poller.acquire(sockfd); err != nil {
+		return -1, netip.AddrPort{}, err
+	}
+	defer poller.release(sockfd)
 	for {
-		// Accept4 with SOCK_NONBLOCK|SOCK_CLOEXEC keeps accepted sockets
-		// non-blocking too, so their reads/writes also go through the poller.
 		nfd, sa, err := syscall.Accept4(sockfd, syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC)
 		switch err {
 		case nil:
 		case syscall.EINTR:
 			continue
-		case syscall.EAGAIN: // == EWOULDBLOCK on Linux
-			// No pending connection. Park until the listener is readable or
-			// the listening fd is closed, which unblocks accept for shutdown.
+		case syscall.EAGAIN:
 			if werr := poller.wait(sockfd, false, time.Time{}); werr != nil {
 				return -1, netip.AddrPort{}, werr
 			}
@@ -189,9 +188,11 @@ func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
 }
 
 func (*hostNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (int, error) {
-	// net.Conn.Write must send the whole buffer (or report an error), so loop
-	// over short writes. The send timeout is (re)programmed each iteration so a
-	// deadline bounds the whole operation, not each individual write.
+	// net.Conn.Write must send the whole buffer or report an error.
+	if err := poller.acquire(sockfd); err != nil {
+		return 0, err
+	}
+	defer poller.release(sockfd)
 	total := 0
 	for total < len(buf) {
 		if expired(deadline) {
@@ -202,9 +203,7 @@ func (*hostNetdev) Send(sockfd int, buf []byte, flags int, deadline time.Time) (
 			if err == syscall.EINTR {
 				continue
 			}
-			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-				// The send buffer is full. Park until writable, the deadline
-				// expires, or the fd is closed.
+			if err == syscall.EAGAIN {
 				if werr := poller.wait(sockfd, true, deadline); werr != nil {
 					return total, werr
 				}
@@ -224,6 +223,10 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 	if expired(deadline) {
 		return 0, timeoutError{}
 	}
+	if err := poller.acquire(sockfd); err != nil {
+		return 0, err
+	}
+	defer poller.release(sockfd)
 
 	for {
 		n, err := syscall.Read(sockfd, buf)
@@ -231,9 +234,7 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 			if err == syscall.EINTR {
 				continue
 			}
-			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {
-				// Nothing to read yet. Park until readable, the deadline
-				// expires, or the fd is closed.
+			if err == syscall.EAGAIN {
 				if werr := poller.wait(sockfd, false, deadline); werr != nil {
 					return 0, werr
 				}
@@ -253,10 +254,7 @@ func (*hostNetdev) Recv(sockfd int, buf []byte, flags int, deadline time.Time) (
 }
 
 func (*hostNetdev) Close(sockfd int) error {
-	// Wake goroutines parked on this fd before closing it, so a blocked
-	// Accept, Recv or Send returns on shutdown.
-	poller.close(sockfd)
-	return syscall.Close(sockfd)
+	return poller.close(sockfd)
 }
 
 func (*hostNetdev) SetSockOpt(sockfd int, level int, opt int, value interface{}) error {
@@ -317,20 +315,6 @@ func sockaddrFromParts(addr netip.Addr, port uint16) syscall.Sockaddr {
 // expired reports whether a non-zero deadline is already in the past.
 func expired(deadline time.Time) bool {
 	return !deadline.IsZero() && !deadline.After(time.Now())
-}
-
-// setSockTimeout programs SO_RCVTIMEO/SO_SNDTIMEO so a blocking recv/send
-// returns EAGAIN at the deadline. A zero deadline disables the timeout.
-func setSockTimeout(sockfd int, opt int, deadline time.Time) error {
-	var tv syscall.Timeval
-	if !deadline.IsZero() {
-		d := time.Until(deadline)
-		if d < time.Microsecond {
-			d = time.Microsecond
-		}
-		tv = syscall.NsecToTimeval(d.Nanoseconds())
-	}
-	return syscall.SetsockoptTimeval(sockfd, syscall.SOL_SOCKET, opt, &tv)
 }
 
 // --- Name resolution --------------------------------------------------------
