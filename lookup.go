@@ -59,7 +59,7 @@ func (r *Resolver) LookupHost(ctx context.Context, host string) (addrs []string,
 	}
 	ip, err := netdev.GetHostByName(host)
 	if err != nil {
-		return nil, &DNSError{Err: err.Error(), Name: host}
+		return nil, newLookupError(host, err)
 	}
 	return []string{ip.String()}, nil
 }
@@ -88,7 +88,7 @@ func (r *Resolver) LookupIPAddr(ctx context.Context, host string) ([]IPAddr, err
 	}
 	ip, err := netdev.GetHostByName(host)
 	if err != nil {
-		return nil, &DNSError{Err: err.Error(), Name: host}
+		return nil, newLookupError(host, err)
 	}
 	return []IPAddr{{IP: ip.AsSlice(), Zone: ip.Zone()}}, nil
 }
@@ -104,7 +104,7 @@ func (r *Resolver) LookupNetIP(ctx context.Context, network, host string) ([]net
 	}
 	ip, err := netdev.GetHostByName(host)
 	if err != nil {
-		return nil, &DNSError{Err: err.Error(), Name: host}
+		return nil, newLookupError(host, err)
 	}
 	return []netip.Addr{ip}, nil
 }
@@ -149,3 +149,23 @@ func (r *Resolver) LookupTXT(ctx context.Context, name string) ([]string, error)
 
 // errNoSuchHost is returned when the host lookup finds no matching records.
 var errNoSuchHost = errors.New("no such host")
+
+// newLookupError wraps a netdev resolver error in a DNSError for host.
+//
+// TINYGO: the netdev can report a DNSError of its own, and callers read
+// IsNotFound and IsTimeout on the outer error, so carry those flags out.
+func newLookupError(host string, err error) *DNSError {
+	dnsErr := &DNSError{Err: err.Error(), Name: host, UnwrapErr: err}
+	if inner, ok := err.(*DNSError); ok {
+		// Take the inner description and not its Error(), which repeats the
+		// "lookup <host>" prefix that this error adds.
+		dnsErr.Err = inner.Err
+		dnsErr.IsNotFound = inner.IsNotFound
+		dnsErr.IsTimeout = inner.IsTimeout
+		dnsErr.IsTemporary = inner.IsTemporary
+		if inner.Server != "" {
+			dnsErr.Server = inner.Server
+		}
+	}
+	return dnsErr
+}
