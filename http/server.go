@@ -7,7 +7,6 @@
 // TINYGO: Removed ALPN protocol support
 // TINYGO: Removed some HTTP/2 support
 // TINYGO: Removed TimeoutHandler
-// TINYGO: Removed ServeTLS and ListenAndServeTLS
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -1907,7 +1906,15 @@ func (c *conn) serve(ctx context.Context) {
 		}
 	}()
 
-	// TINYGO: Removed TLS conn check
+	// TINYGO: Removed the ALPN and HTTP/2 parts of the TLS conn check
+	if tlsConn, ok := c.rwc.(*tls.Conn); ok {
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			c.server.logf("http: TLS handshake error from %s: %v", c.rwc.RemoteAddr(), err)
+			return
+		}
+		c.tlsState = new(tls.ConnectionState)
+		*c.tlsState = tlsConn.ConnectionState()
+	}
 
 	// HTTP/1.x from here on.
 
@@ -3299,7 +3306,6 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
 	return srv.ServeTLS(ln, certFile, keyFile)
 }
 
