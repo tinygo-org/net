@@ -413,19 +413,26 @@ func listenTCP(laddr *TCPAddr) (Listener, error) {
 		return nil, err
 	}
 
-	if laddr.Port == 0 {
-		// Report the selected port. See https://pkg.go.dev/net#Listen.
-		// Drivers without GetSockname keep the requested address.
-		if g, ok := netdev.(interface {
-			GetSockname(sockfd int) (netip.AddrPort, error)
-		}); ok {
-			if ap, err := g.GetSockname(fd); err == nil && ap.Port() != 0 {
-				laddr = &TCPAddr{IP: laddr.IP, Port: int(ap.Port()), Zone: laddr.Zone}
-			}
-		}
-	}
+	return &listener{fd: fd, laddr: boundTCPAddr(fd, laddr)}, nil
+}
 
-	return &listener{fd: fd, laddr: laddr}, nil
+// boundTCPAddr reports the port the kernel picked for port 0. See https://pkg.go.dev/net#Listen.
+// Drivers without GetSockname keep the requested address.
+func boundTCPAddr(fd int, laddr *TCPAddr) *TCPAddr {
+	if laddr.Port != 0 {
+		return laddr
+	}
+	g, ok := netdev.(interface {
+		GetSockname(sockfd int) (netip.AddrPort, error)
+	})
+	if !ok {
+		return laddr
+	}
+	ap, err := g.GetSockname(fd)
+	if err != nil || ap.Port() == 0 {
+		return laddr
+	}
+	return &TCPAddr{IP: laddr.IP, Port: int(ap.Port()), Zone: laddr.Zone}
 }
 
 // TCPListener is a TCP network listener. Clients should typically
@@ -467,7 +474,7 @@ func ListenTCP(network string, laddr *TCPAddr) (*TCPListener, error) {
 		return nil, err
 	}
 
-	return &TCPListener{listener{fd: fd, laddr: laddr}}, nil
+	return &TCPListener{listener{fd: fd, laddr: boundTCPAddr(fd, laddr)}}, nil
 }
 
 // AcceptTCP accepts the next incoming call and returns the new

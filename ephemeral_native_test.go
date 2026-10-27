@@ -1,4 +1,4 @@
-//go:build (linux || darwin) && !baremetal && !tinygo.wasm
+//go:build linux && !baremetal && !tinygo.wasm
 
 package net
 
@@ -74,5 +74,32 @@ func TestEphemeralPreservesZone(t *testing.T) {
 	}
 	if addr.Port != 0 {
 		t.Fatalf("input address changed: %v", addr)
+	}
+}
+
+func TestEphemeralListenTCP(t *testing.T) {
+	l, err := ListenTCP("tcp", &TCPAddr{IP: IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if l.Addr().(*TCPAddr).Port == 0 {
+		t.Fatalf("ListenTCP reports port 0: %v", l.Addr())
+	}
+}
+
+func TestEphemeralListenTCPPreservesZone(t *testing.T) {
+	previous := netdev
+	defer func() { netdev = previous }()
+	netdev = &ephemeralTestNetdev{}
+	addr := &TCPAddr{IP: ParseIP("fe80::1"), Zone: "test-zone"}
+	l, err := ListenTCP("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	got := l.Addr().(*TCPAddr)
+	if got.Port != 12345 || got.Zone != addr.Zone || addr.Port != 0 {
+		t.Fatalf("bound address=%v input=%v", got, addr)
 	}
 }
