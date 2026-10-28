@@ -2593,6 +2593,14 @@ func (mux *ServeMux) redirectToPathSlash(host, path string, u *url.URL) (*url.UR
 // shouldRedirectRLocked reports whether the given path and host should be redirected to
 // path+"/". This should happen if a handler is registered for path+"/" but
 // not path -- see comments at ServeMux.
+//
+// BUG(tinygo): these are exact map-key lookups, but mux.m is keyed on the full
+// pattern. A method-prefixed pattern is keyed "GET /foo/" rather than "/foo/",
+// and a wildcard tail keys as "/foo/{x...}", so neither is found here. A
+// request for /foo therefore misses the /foo -> /foo/ redirect (it 404s, or
+// falls through to a "/" catch-all), and conversely a registered "GET /foo" is
+// invisible to the first loop, so /foo wrongly redirects to the subtree over
+// it. Fix: scan mux.m comparing muxEntry.path, the way match does.
 func (mux *ServeMux) shouldRedirectRLocked(host, path string) bool {
 	p := []string{path, host + path}
 
