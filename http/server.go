@@ -1908,9 +1908,20 @@ func (c *conn) serve(ctx context.Context) {
 
 	// TINYGO: Removed the ALPN and HTTP/2 parts of the TLS conn check
 	if tlsConn, ok := c.rwc.(*tls.Conn); ok {
+		tlsTO := c.server.tlsHandshakeTimeout()
+		if tlsTO > 0 {
+			dl := time.Now().Add(tlsTO)
+			c.rwc.SetReadDeadline(dl)
+			c.rwc.SetWriteDeadline(dl)
+		}
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			c.server.logf("http: TLS handshake error from %s: %v", c.rwc.RemoteAddr(), err)
 			return
+		}
+		// Restore Conn-level deadlines.
+		if tlsTO > 0 {
+			c.rwc.SetReadDeadline(time.Time{})
+			c.rwc.SetWriteDeadline(time.Time{})
 		}
 		c.tlsState = new(tls.ConnectionState)
 		*c.tlsState = tlsConn.ConnectionState()
