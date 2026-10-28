@@ -32,7 +32,6 @@ import (
 	urlpkg "net/url"
 	"path"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -2322,8 +2321,7 @@ func RedirectHandler(url string, code int) Handler {
 type ServeMux struct {
 	mu    sync.RWMutex
 	m     map[string]muxEntry
-	es    []muxEntry // slice of entries sorted from longest to shortest.
-	hosts bool       // whether any patterns contain hostnames
+	hosts bool // whether any patterns contain hostnames
 }
 
 type muxEntry struct {
@@ -2780,9 +2778,6 @@ func (mux *ServeMux) Handle(pattern string, handler Handler) {
 	}
 	e := muxEntry{h: handler, pattern: pattern, method: method, path: patternPath}
 	mux.m[pattern] = e
-	if patternPath[len(patternPath)-1] == '/' {
-		mux.es = appendSorted(mux.es, e)
-	}
 
 	if patternPath[0] != '/' {
 		mux.hosts = true
@@ -2812,21 +2807,6 @@ func isMethodToken(s string) bool {
 		}
 	}
 	return true
-}
-
-func appendSorted(es []muxEntry, e muxEntry) []muxEntry {
-	n := len(es)
-	i := sort.Search(n, func(i int) bool {
-		return len(es[i].path) < len(e.path)
-	})
-	if i == n {
-		return append(es, e)
-	}
-	// we now know that i points at where we want to insert
-	es = append(es, muxEntry{}) // try to grow the slice in place, any entry works.
-	copy(es[i+1:], es[i:])      // Move shorter entries down
-	es[i] = e
-	return es
 }
 
 // HandleFunc registers the handler function for the given pattern.
