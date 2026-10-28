@@ -3283,6 +3283,9 @@ func ListenAndServe(addr string, handler Handler) error {
 //
 // TINYGO: uses software crypto/tls. No HTTP/2 negotiation.
 func (srv *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
+	if !softwareTLS() {
+		return errNoSoftwareTLS
+	}
 	config := srv.TLSConfig
 	if config == nil {
 		config = &tls.Config{}
@@ -3309,6 +3312,9 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
 	if srv.shuttingDown() {
 		return ErrServerClosed
 	}
+	if !softwareTLS() {
+		return errNoSoftwareTLS
+	}
 	addr := srv.Addr
 	if addr == "" {
 		addr = ":https"
@@ -3324,6 +3330,19 @@ func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
 func ListenAndServeTLS(addr, certFile, keyFile string, handler Handler) error {
 	server := &Server{Addr: addr, Handler: handler}
 	return server.ListenAndServeTLS(certFile, keyFile)
+}
+
+// errNoSoftwareTLS keeps ServeTLS from serving plain HTTP on targets whose
+// crypto/tls is the netdev stub.
+var errNoSoftwareTLS = errors.New("http: TLS server needs software crypto/tls, which this target lacks")
+
+// softwareTLS reports whether crypto/tls runs a real handshake. TinyGo's
+// netdev stub returns from Handshake without reading the conn.
+func softwareTLS() bool {
+	c, s := net.Pipe()
+	c.Close()
+	defer s.Close()
+	return tls.Server(s, &tls.Config{}).Handshake() != nil
 }
 
 // onceCloseListener wraps a net.Listener, protecting it from
