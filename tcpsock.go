@@ -102,6 +102,8 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 	switch address {
 	case ":http":
 		address = ":80"
+	case ":https":
+		address = ":443"
 	}
 
 	// TINYGO: Use netdev resolver

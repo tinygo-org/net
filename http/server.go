@@ -7,7 +7,6 @@
 // TINYGO: Removed ALPN protocol support
 // TINYGO: Removed some HTTP/2 support
 // TINYGO: Removed TimeoutHandler
-// TINYGO: Removed ServeTLS and ListenAndServeTLS
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -1907,7 +1906,26 @@ func (c *conn) serve(ctx context.Context) {
 		}
 	}()
 
-	// TINYGO: Removed TLS conn check
+	// TINYGO: Removed the ALPN and HTTP/2 parts of the TLS conn check
+	if tlsConn, ok := c.rwc.(*tls.Conn); ok {
+		tlsTO := c.server.tlsHandshakeTimeout()
+		if tlsTO > 0 {
+			dl := time.Now().Add(tlsTO)
+			c.rwc.SetReadDeadline(dl)
+			c.rwc.SetWriteDeadline(dl)
+		}
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			c.server.logf("http: TLS handshake error from %s: %v", c.rwc.RemoteAddr(), err)
+			return
+		}
+		// Restore Conn-level deadlines.
+		if tlsTO > 0 {
+			c.rwc.SetReadDeadline(time.Time{})
+			c.rwc.SetWriteDeadline(time.Time{})
+		}
+		c.tlsState = new(tls.ConnectionState)
+		*c.tlsState = tlsConn.ConnectionState()
+	}
 
 	// HTTP/1.x from here on.
 
@@ -3258,6 +3276,73 @@ func logf(r *Request, format string, args ...any) {
 func ListenAndServe(addr string, handler Handler) error {
 	server := &Server{Addr: addr, Handler: handler}
 	return server.ListenAndServe()
+}
+
+// ServeTLS accepts HTTPS connections on l, wrapping each with a TLS server
+// using the given certificate and key files or srv.TLSConfig.
+//
+// TINYGO: uses software crypto/tls. No HTTP/2 negotiation.
+func (srv *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
+	if !softwareTLS() {
+		return errNoSoftwareTLS
+	}
+	config := srv.TLSConfig
+	if config == nil {
+		config = &tls.Config{}
+	} else {
+		config = config.Clone()
+	}
+
+	configHasCert := len(config.Certificates) > 0 || config.GetCertificate != nil
+	if !configHasCert || certFile != "" || keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return err
+		}
+		config.Certificates = []tls.Certificate{cert}
+	}
+
+	tlsListener := tls.NewListener(l, config)
+	return srv.Serve(tlsListener)
+}
+
+// ListenAndServeTLS listens on srv.Addr and serves HTTPS requests, loading the
+// server certificate and key from certFile and keyFile.
+func (srv *Server) ListenAndServeTLS(certFile, keyFile string) error {
+	if srv.shuttingDown() {
+		return ErrServerClosed
+	}
+	if !softwareTLS() {
+		return errNoSoftwareTLS
+	}
+	addr := srv.Addr
+	if addr == "" {
+		addr = ":https"
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return srv.ServeTLS(ln, certFile, keyFile)
+}
+
+// ListenAndServeTLS is the HTTPS counterpart of ListenAndServe.
+func ListenAndServeTLS(addr, certFile, keyFile string, handler Handler) error {
+	server := &Server{Addr: addr, Handler: handler}
+	return server.ListenAndServeTLS(certFile, keyFile)
+}
+
+// errNoSoftwareTLS keeps ServeTLS from serving plain HTTP on targets whose
+// crypto/tls is the netdev stub.
+var errNoSoftwareTLS = errors.New("http: TLS server needs software crypto/tls, which this target lacks")
+
+// softwareTLS reports whether crypto/tls runs a real handshake. TinyGo's
+// netdev stub returns from Handshake without reading the conn.
+func softwareTLS() bool {
+	c, s := net.Pipe()
+	c.Close()
+	defer s.Close()
+	return tls.Server(s, &tls.Config{}).Handshake() != nil
 }
 
 // onceCloseListener wraps a net.Listener, protecting it from
