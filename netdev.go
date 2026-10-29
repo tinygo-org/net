@@ -37,10 +37,12 @@ var netdev netdever = &nopNetdev{}
 var errPollInterrupted = errors.New("net: I/O interrupted by deadline change")
 
 // pollInterrupt wakes goroutines blocked in Recv (write=false) or Send
-// (write=true) on sockfd, for netdevs that support it.
-func pollInterrupt(sockfd int, write bool) {
-	if p, ok := netdev.(interface{ PollInterrupt(sockfd int, write bool) }); ok {
-		p.PollInterrupt(sockfd, write)
+// (write=true) on sockfd, for netdevs that support it. deadline is the new one.
+func pollInterrupt(sockfd int, write bool, deadline time.Time) {
+	if p, ok := netdev.(interface {
+		PollInterrupt(sockfd int, write bool, deadline time.Time)
+	}); ok {
+		p.PollInterrupt(sockfd, write, deadline)
 	}
 }
 

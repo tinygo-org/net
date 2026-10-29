@@ -23,6 +23,11 @@ type pollDesc struct {
 	readInterrupt  bool
 	writeInterrupt bool
 
+	// The latest deadline per direction, as Go's poll descriptor keeps it. It
+	// wins over a caller's copy that predates a concurrent deadline change.
+	deadline    [2]time.Time
+	hasDeadline [2]bool
+
 	// Calls in progress on the fd. Close defers close(2) until this drops to 0,
 	// so the fd number cannot be reused while a call may still wait on it.
 	refs    int
@@ -167,6 +172,9 @@ func (p *netPoller) wait(fd int, write bool, deadline time.Time) error {
 		p.mu.Unlock()
 		return errPollClosed
 	}
+	if dir := dirIndex(write); pd.hasDeadline[dir] {
+		deadline = pd.deadline[dir]
+	}
 	if write {
 		if pd.writeInterrupt {
 			pd.writeInterrupt = false
@@ -224,15 +232,17 @@ func (p *netPoller) cancelWaiter(fd int, write bool, ch chan error) error {
 	}
 }
 
-// interrupt wakes the goroutines parked on fd in one direction so they pick up
-// a new deadline. net/http's abortPendingRead relies on this.
-func (p *netPoller) interrupt(fd int, write bool) {
+// interrupt records the new deadline of fd and wakes the goroutines parked on
+// it in one direction so they pick it up. net/http's abortPendingRead relies on this.
+func (p *netPoller) interrupt(fd int, write bool, deadline time.Time) {
 	p.mu.Lock()
 	pd := p.fds[fd]
 	if pd == nil || pd.refs == 0 {
 		p.mu.Unlock()
 		return
 	}
+	dir := dirIndex(write)
+	pd.deadline[dir], pd.hasDeadline[dir] = deadline, true
 	var chs []chan error
 	if write {
 		chs, pd.writers = pd.writers, nil
@@ -284,6 +294,13 @@ func (p *netPoller) loop(epfd int) {
 		}
 		p.mu.Unlock()
 	}
+}
+
+func dirIndex(write bool) int {
+	if write {
+		return 1
+	}
+	return 0
 }
 
 func removeChan(s []chan error, ch chan error) []chan error {

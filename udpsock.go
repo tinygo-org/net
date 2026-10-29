@@ -413,19 +413,19 @@ func (c *UDPConn) RemoteAddr() Addr {
 func (c *UDPConn) SetDeadline(t time.Time) error {
 	c.readDeadline = t
 	c.writeDeadline = t
-	pollInterrupt(c.fd, false)
-	pollInterrupt(c.fd, true)
+	pollInterrupt(c.fd, false, t)
+	pollInterrupt(c.fd, true, t)
 	return nil
 }
 
 func (c *UDPConn) SetReadDeadline(t time.Time) error {
 	c.readDeadline = t
-	pollInterrupt(c.fd, false)
+	pollInterrupt(c.fd, false, t)
 	return nil
 }
 
 func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	c.writeDeadline = t
-	pollInterrupt(c.fd, true)
+	pollInterrupt(c.fd, true, t)
 	return nil
 }
