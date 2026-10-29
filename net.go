@@ -292,6 +292,17 @@ func (e *OpError) Timeout() bool {
 	return ok && t.Timeout()
 }
 
+type temporary interface {
+	Temporary() bool
+}
+
+// Temporary is deprecated in Go, but without it OpError does not satisfy
+// net.Error, and callers that check err.(net.Error).Timeout() miss timeouts.
+func (e *OpError) Temporary() bool {
+	t, ok := e.Err.(temporary)
+	return ok && t.Temporary()
+}
+
 // A ParseError is the error type of literal network address parsers.
 type ParseError struct {
 	// Type is the type of string that was expected, such as
@@ -319,6 +330,9 @@ func (e *AddrError) Error() string {
 	}
 	return s
 }
+
+func (e *AddrError) Timeout() bool   { return false }
+func (e *AddrError) Temporary() bool { return false }
 
 // errNetClosing is the type of the variable ErrNetClosing.
 // This is used to implement the net.Error interface.
