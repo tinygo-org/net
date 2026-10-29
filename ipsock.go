@@ -98,3 +98,11 @@ func JoinHostPort(host, port string) string {
 	}
 	return host + ":" + port
 }
+
+// loopbackFor returns the loopback address of ip's family.
+func loopbackFor(ip IP) IP {
+	if len(ip) == IPv6len && ip.To4() == nil {
+		return IPv6loopback
+	}
+	return IPv4(127, 0, 0, 1).To4()
+}
