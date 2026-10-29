@@ -315,7 +315,49 @@ func roundTrip(req *Request) (*Response, error) {
 	req.onEOF = func() { conn.Close() }
 
 	reader := bufio.NewReader(conn)
-	return ReadResponse(reader, req)
+	resp, err := ReadResponse(reader, req)
+	if err == nil && resp.isProtocolSwitch() {
+		// The caller owns conn after a 101, as with Go's errCallerOwnsConn.
+		resp.Body = newReadWriteCloserBody(reader, conn)
+	}
+	return resp, err
+}
+
+func newReadWriteCloserBody(br *bufio.Reader, rwc io.ReadWriteCloser) io.ReadWriteCloser {
+	body := &readWriteCloserBody{ReadWriteCloser: rwc}
+	if br.Buffered() != 0 {
+		body.br = br
+	}
+	return body
+}
+
+// readWriteCloserBody is the Response.Body type used when we want to
+// give users write access to the Body through the underlying connection.
+type readWriteCloserBody struct {
+	_  incomparable
+	br *bufio.Reader // used until empty
+	io.ReadWriteCloser
+}
+
+func (b *readWriteCloserBody) Read(p []byte) (n int, err error) {
+	if b.br != nil {
+		if n := b.br.Buffered(); len(p) > n {
+			p = p[:n]
+		}
+		n, err = b.br.Read(p)
+		if b.br.Buffered() == 0 {
+			b.br = nil
+		}
+		return n, err
+	}
+	return b.ReadWriteCloser.Read(p)
+}
+
+func (b *readWriteCloserBody) CloseWrite() error {
+	if cw, ok := b.ReadWriteCloser.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return fmt.Errorf("CloseWrite: %w", ErrNotSupported)
 }
 
 // See 2 (end of page 4) https://www.ietf.org/rfc/rfc2617.txt
