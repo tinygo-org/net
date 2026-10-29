@@ -45,6 +45,14 @@ func pollInterrupt(sockfd int, write bool) {
 }
 
 // (useNetdev is go:linkname'd from tinygo/drivers package)
+// listenBacklog is the netdev's listen backlog, or 5 for drivers that don't say.
+func listenBacklog() int {
+	if b, ok := netdev.(interface{ ListenBacklog() int }); ok {
+		return b.ListenBacklog()
+	}
+	return 5
+}
+
 func useNetdev(dev netdever) {
 	netdev = dev
 }

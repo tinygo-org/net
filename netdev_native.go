@@ -19,7 +19,9 @@ import (
 	"io"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -155,6 +157,24 @@ func (*hostNetdev) PollInterrupt(sockfd int, write bool) {
 
 func (*hostNetdev) Listen(sockfd int, backlog int) error {
 	return syscall.Listen(sockfd, backlog)
+}
+
+var listenerBacklog = sync.OnceValue(maxListenerBacklog)
+
+// ListenBacklog is the system's listen backlog limit, which Go passes to listen.
+func (*hostNetdev) ListenBacklog() int { return listenerBacklog() }
+
+// maxListenerBacklog reads the system limit, as Go does.
+func maxListenerBacklog() int {
+	b, err := os.ReadFile("/proc/sys/net/core/somaxconn")
+	if err != nil {
+		return syscall.SOMAXCONN
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || n <= 0 {
+		return syscall.SOMAXCONN
+	}
+	return n
 }
 
 func (*hostNetdev) Accept(sockfd int) (int, netip.AddrPort, error) {
