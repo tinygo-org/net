@@ -7,6 +7,7 @@
 package net
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -160,6 +161,11 @@ type TCPConn struct {
 // If the IP field of raddr is nil or an unspecified IP address, the
 // local system is assumed.
 func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
+	return dialTCP(context.Background(), time.Time{}, network, laddr, raddr)
+}
+
+// dialTCP connects to raddr, giving up at deadline or when ctx is done.
+func dialTCP(ctx context.Context, deadline time.Time, network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 
 	switch network {
 	case "tcp", "tcp4", "tcp6":
@@ -179,16 +185,20 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 		return nil, errors.New("invalid IP address")
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: mapErr(err)}
+	}
+
 	fd, err := netdev.Socket(socketFamily(raddr.IP), _SOCK_STREAM, _IPPROTO_TCP)
 	if err != nil {
-		return nil, err
+		return nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: err}
 	}
 
 	rip, _ := netip.AddrFromSlice(raddr.IP)
 	raddrport := netip.AddrPortFrom(rip, uint16(raddr.Port))
-	if err = netdev.Connect(fd, "", raddrport); err != nil {
+	if err = connectContext(ctx, fd, "", raddrport, deadline); err != nil {
 		netdev.Close(fd)
-		return nil, err
+		return nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: mapErr(err)}
 	}
 
 	return &TCPConn{
