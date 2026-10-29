@@ -106,6 +106,10 @@ func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
 
 	// TINYGO: Use netdev resolver
 
+	// An empty address is the unspecified address and any port, as in Go.
+	if address == "" {
+		return &TCPAddr{}, nil
+	}
 	host, sport, err := SplitHostPort(address)
 	if err != nil {
 		return nil, err
