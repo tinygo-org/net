@@ -16,6 +16,7 @@
 package net
 
 import (
+	"context"
 	"io"
 	"net/netip"
 	"os"
@@ -37,14 +38,6 @@ func init() {
 // Sockets are non-blocking. A call that would block parks on the poller in
 // netpoll_native.go until the fd is ready, its deadline passes, or it closes.
 type hostNetdev struct{}
-
-// timeoutError is returned from Send/Recv when a deadline expires. It satisfies
-// the net.Error interface so callers (e.g. net/http) can detect timeouts.
-type timeoutError struct{}
-
-func (timeoutError) Error() string   { return "i/o timeout" }
-func (timeoutError) Timeout() bool   { return true }
-func (timeoutError) Temporary() bool { return true }
 
 func (*hostNetdev) GetHostByName(name string) (netip.Addr, error) {
 	return hostLookup(name)
@@ -106,6 +99,12 @@ func (*hostNetdev) Bind(sockfd int, ip netip.AddrPort) error {
 }
 
 func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
+	return n.ConnectContext(context.Background(), sockfd, host, ip, time.Time{})
+}
+
+// ConnectContext connects sockfd, giving up with timeoutError at deadline, or
+// with ctx.Err() once ctx is done.
+func (n *hostNetdev) ConnectContext(ctx context.Context, sockfd int, host string, ip netip.AddrPort, deadline time.Time) error {
 	addr := ip.Addr()
 	if !addr.IsValid() || addr.IsUnspecified() {
 		// net.DialTLS passes the host name with a zero IP; resolve it here.
@@ -130,7 +129,7 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 		case syscall.EINPROGRESS, syscall.EALREADY, syscall.EAGAIN:
 			// The connect finishes when the socket becomes writable, and
 			// SO_ERROR holds its result.
-			if werr := poller.wait(sockfd, true, time.Time{}); werr != nil {
+			if werr := waitConnect(ctx, sockfd, deadline); werr != nil {
 				return werr
 			}
 			soErr, gerr := syscall.GetsockoptInt(sockfd, syscall.SOL_SOCKET, syscall.SO_ERROR)
@@ -144,6 +143,26 @@ func (n *hostNetdev) Connect(sockfd int, host string, ip netip.AddrPort) error {
 		default:
 			return err
 		}
+	}
+}
+
+// waitConnect parks until sockfd is writable, deadline passes or ctx is done.
+func waitConnect(ctx context.Context, sockfd int, deadline time.Time) error {
+	stop := func() bool { return true }
+	if ctx.Done() != nil {
+		stop = context.AfterFunc(ctx, func() { poller.interrupt(sockfd, true) })
+	}
+	for {
+		err := poller.wait(sockfd, true, deadline)
+		if err == errPollInterrupted && ctx.Err() == nil {
+			continue
+		}
+		// A canceled ctx wins even if the connect just completed, as the
+		// interrupt it sent would otherwise be left pending on the fd.
+		if !stop() {
+			return ctx.Err()
+		}
+		return err
 	}
 }
 

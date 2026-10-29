@@ -3,7 +3,7 @@
 // TINYGO: Omit DualStack support
 // TINYGO: Omit Fast Fallback support
 // TINYGO: Don't allow alternate resolver
-// TINYGO: Omit DialTimeout
+// TINYGO: Dial timeouts and ctx apply to the connect only, not name resolution
 // TINYGO: Omit Multipath TCP
 
 // Copyright 2010 The Go Authors. All rights reserved.
@@ -168,8 +168,10 @@ func (d *Dialer) Dial(network, address string) (Conn, error) {
 // See func [Dial] for a description of the network and address
 // parameters.
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn, error) {
-
-	// TINYGO: Ignoring context
+	if ctx == nil {
+		panic("nil context")
+	}
+	deadline := d.deadline(ctx, time.Now())
 
 	switch network {
 	case "tcp", "tcp4", "tcp6":
@@ -177,7 +179,7 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn
 		if err != nil {
 			return nil, err
 		}
-		return DialTCP(network, nil, raddr)
+		return dialTCP(ctx, deadline, network, nil, raddr)
 	case "udp", "udp4", "udp6":
 		raddr, err := ResolveUDPAddr(network, address)
 		if err != nil {
@@ -321,4 +323,54 @@ func ListenPacket(network, address string) (PacketConn, error) {
 	}
 
 	return ListenUDP(network, laddr)
+}
+
+// deadline returns the earliest of d.Deadline, now+d.Timeout and the ctx
+// deadline, as in Go.
+func (d *Dialer) deadline(ctx context.Context, now time.Time) (earliest time.Time) {
+	if d.Timeout != 0 {
+		earliest = now.Add(d.Timeout)
+	}
+	if cd, ok := ctx.Deadline(); ok {
+		earliest = minNonzeroTime(earliest, cd)
+	}
+	return minNonzeroTime(earliest, d.Deadline)
+}
+
+func minNonzeroTime(a, b time.Time) time.Time {
+	if a.IsZero() {
+		return b
+	}
+	if b.IsZero() || a.Before(b) {
+		return a
+	}
+	return b
+}
+
+// timeoutError is returned when a deadline expires. It satisfies net.Error so
+// callers (e.g. net/http) can detect timeouts.
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+// Is matches context.DeadlineExceeded, as Go's does.
+func (timeoutError) Is(target error) bool { return target == context.DeadlineExceeded }
+
+// canceledError is returned when a dial's context is canceled.
+type canceledError struct{}
+
+func (canceledError) Error() string        { return "operation was canceled" }
+func (canceledError) Is(target error) bool { return target == context.Canceled }
+
+// mapErr maps a context error to the net error Go returns for it.
+func mapErr(err error) error {
+	switch err {
+	case context.Canceled:
+		return canceledError{}
+	case context.DeadlineExceeded:
+		return timeoutError{}
+	}
+	return err
 }
