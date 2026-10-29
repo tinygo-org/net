@@ -194,7 +194,7 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 	return &TCPConn{
 		fd:    fd,
 		net:   network,
-		laddr: laddr,
+		laddr: localTCPAddr(fd, laddr),
 		raddr: raddr,
 	}, nil
 }
@@ -383,7 +383,7 @@ func (l *listener) Accept() (Conn, error) {
 	return &TCPConn{
 		fd:    fd,
 		net:   "tcp",
-		laddr: l.laddr,
+		laddr: localTCPAddr(fd, l.laddr),
 		raddr: TCPAddrFromAddrPort(raddr),
 	}, nil
 }
@@ -433,6 +433,25 @@ func boundTCPAddr(fd int, laddr *TCPAddr) *TCPAddr {
 		return laddr
 	}
 	return &TCPAddr{IP: laddr.IP, Port: int(ap.Port()), Zone: laddr.Zone}
+}
+
+// localTCPAddr reports the address a connected fd is bound to when laddr is
+// missing or unspecified, as Go does. Drivers without GetSockname keep laddr.
+func localTCPAddr(fd int, laddr *TCPAddr) *TCPAddr {
+	if laddr != nil && laddr.IP != nil && !laddr.IP.IsUnspecified() {
+		return laddr
+	}
+	g, ok := netdev.(interface {
+		GetSockname(sockfd int) (netip.AddrPort, error)
+	})
+	if !ok {
+		return laddr
+	}
+	ap, err := g.GetSockname(fd)
+	if err != nil {
+		return laddr
+	}
+	return TCPAddrFromAddrPort(ap)
 }
 
 // TCPListener is a TCP network listener. Clients should typically
@@ -488,7 +507,7 @@ func (l *TCPListener) AcceptTCP() (*TCPConn, error) {
 	return &TCPConn{
 		fd:    fd,
 		net:   "tcp",
-		laddr: l.laddr,
+		laddr: localTCPAddr(fd, l.laddr),
 		raddr: TCPAddrFromAddrPort(raddr),
 	}, nil
 }
