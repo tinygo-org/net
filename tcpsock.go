@@ -191,12 +191,14 @@ func DialTCP(network string, laddr, raddr *TCPAddr) (*TCPConn, error) {
 		return nil, err
 	}
 
-	return &TCPConn{
-		fd:    fd,
-		net:   network,
-		laddr: laddr,
-		raddr: raddr,
-	}, nil
+	return newTCPConn(fd, network, laddr, raddr), nil
+}
+
+// newTCPConn wraps a connected fd. As in Go, Nagle's algorithm is disabled.
+// Netdevs that cannot do so keep their default.
+func newTCPConn(fd int, network string, laddr, raddr *TCPAddr) *TCPConn {
+	netdev.SetSockOpt(fd, _SOL_TCP, _TCP_NODELAY, true)
+	return &TCPConn{fd: fd, net: network, laddr: laddr, raddr: raddr}
 }
 
 // TINYGO: Use netdev for Conn methods: Read = Recv, Write = Send, etc.
@@ -326,10 +328,8 @@ func (c *TCPConn) CloseRead() error {
 // packet transmission in hopes of sending fewer packets (Nagle's
 // algorithm). The default is true (no delay), meaning that data is
 // sent as soon as possible after a Write.
-//
-// TINYGO: no-op; Nagle behavior is managed by the netdev driver.
 func (c *TCPConn) SetNoDelay(noDelay bool) error {
-	return nil
+	return netdev.SetSockOpt(c.fd, _SOL_TCP, _TCP_NODELAY, noDelay)
 }
 
 // SetReadBuffer sets the size of the operating system's receive buffer
@@ -380,12 +380,7 @@ func (l *listener) Accept() (Conn, error) {
 		return nil, err
 	}
 
-	return &TCPConn{
-		fd:    fd,
-		net:   "tcp",
-		laddr: l.laddr,
-		raddr: TCPAddrFromAddrPort(raddr),
-	}, nil
+	return newTCPConn(fd, "tcp", l.laddr, TCPAddrFromAddrPort(raddr)), nil
 }
 
 func (l *listener) Close() error {
@@ -466,12 +461,7 @@ func (l *TCPListener) AcceptTCP() (*TCPConn, error) {
 		return nil, err
 	}
 
-	return &TCPConn{
-		fd:    fd,
-		net:   "tcp",
-		laddr: l.laddr,
-		raddr: TCPAddrFromAddrPort(raddr),
-	}, nil
+	return newTCPConn(fd, "tcp", l.laddr, TCPAddrFromAddrPort(raddr)), nil
 }
 
 // SetDeadline sets the deadline associated with the listener.
